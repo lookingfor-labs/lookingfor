@@ -6,6 +6,7 @@
   "main": "out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
+    "dev:browser": "vite --config vite.browser.config.ts",
     "build": "electron-vite build",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },

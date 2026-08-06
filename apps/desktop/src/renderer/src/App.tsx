@@ -47,7 +47,7 @@ export function App(): JSX.Element {
     setIsAnalyzing(true);
     setError(undefined);
     try {
-      setAnalysis(await window.brainBuddy.analyzeInput({ text: value }));
+      setAnalysis(await analyzeInput(value));
     } catch {
       setError("本地分析失败，请缩短输入后重试。");
     } finally {
@@ -125,6 +125,31 @@ export function App(): JSX.Element {
       )}
     </main>
   );
+}
+
+async function analyzeInput(text: string): Promise<PrivacyAnalysis> {
+  if (window.brainBuddy) {
+    return window.brainBuddy.analyzeInput({ text });
+  }
+  if (!import.meta.env.DEV) {
+    throw new Error("The preload privacy API is unavailable");
+  }
+
+  // Headless it-runner hosts cannot open Electron. This development-only path
+  // lets the browser preview exercise the same pure, local privacy engine.
+  const { PrivacyEngine } = await import("@brainbuddy/privacy-engine");
+  return new PrivacyEngine({
+    knownEntities: [
+      {
+        id: "demo-person-zhang-wei",
+        canonicalName: "张伟",
+        entityType: "person",
+        token: "[PERSON_A]",
+        aliases: [],
+        defaultPolicy: "replace_with_token"
+      }
+    ]
+  }).analyze(text);
 }
 
 function EntityCard({ entity }: { readonly entity: DetectedEntity }): JSX.Element {

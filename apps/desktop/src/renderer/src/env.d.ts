@@ -2,7 +2,7 @@ import type { BrainBuddyApi } from "@brainbuddy/shared-contracts";
 
 declare global {
   interface Window {
-    readonly brainBuddy: BrainBuddyApi;
+    readonly brainBuddy?: BrainBuddyApi;
   }
 }
 

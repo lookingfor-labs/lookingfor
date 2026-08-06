@@ -6,21 +6,45 @@ tags: ["dev", "desktop", "electron"]
 workspace:
   workdir: "${PROJECT_ROOT}"
 
+env:
+  autoDirs:
+    - "${PROJECT_ROOT}/.it-runner/tasks/desktop-dev/envs"
+  required:
+    - "MISE_NODE_VERSION"
+
 processes:
   - name: "electron-vite"
     cmd: |-
       cd "${PROJECT_ROOT}"
-      if [ ! -x "${PROJECT_ROOT}/node_modules/.bin/electron-vite" ]; then
-        npm ci
+      mise_bin="$(command -v mise || true)"
+      if [ -z "$mise_bin" ] && [ -x "$HOME/.local/bin/mise" ]; then
+        mise_bin="$HOME/.local/bin/mise"
       fi
-      exec npm run dev
-    ports: [5173]
+      if [ -z "$mise_bin" ]; then
+        echo "desktop-dev requires mise to provide Node ${MISE_NODE_VERSION}" >&2
+        exit 1
+      fi
+      if [ ! -x "${PROJECT_ROOT}/node_modules/.bin/electron-vite" ]; then
+        "$mise_bin" exec "node@${MISE_NODE_VERSION}" -- npm ci
+      fi
+      if [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; then
+        echo "No graphical session detected; starting the browser development preview"
+        exec "$mise_bin" exec "node@${MISE_NODE_VERSION}" -- \
+          npm run dev:browser --workspace @brainbuddy/desktop
+      fi
+      if [ "$(id -u)" -eq 0 ]; then
+        exec "$mise_bin" exec "node@${MISE_NODE_VERSION}" -- \
+          npm run dev --workspace @brainbuddy/desktop -- --noSandbox
+      fi
+      exec "$mise_bin" exec "node@${MISE_NODE_VERSION}" -- \
+        npm run dev --workspace @brainbuddy/desktop
+    ports: [15174]
     startupTimeoutSeconds: 45
 
 health:
   http:
     - name: "renderer dev server"
-      url: "http://127.0.0.1:5173/"
+      url: "http://127.0.0.1:15174/"
       timeoutSeconds: 3
 
 watch:
