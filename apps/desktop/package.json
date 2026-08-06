@@ -1,0 +1,27 @@
+{
+  "name": "@brainbuddy/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@brainbuddy/domain": "*",
+    "@brainbuddy/privacy-engine": "*",
+    "@brainbuddy/shared-contracts": "*",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^5.2.0",
+    "electron": "^39.8.10",
+    "electron-vite": "^5.0.0"
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "name": "brain-buddy",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local-first private memory assistant demo",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace @brainbuddy/desktop",
+    "build": "npm run build --workspace @brainbuddy/desktop",
+    "test": "vitest run",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.2",
+    "vite": "^7.3.6",
+    "vitest": "^4.1.10"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
