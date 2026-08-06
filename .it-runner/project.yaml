@@ -1,0 +1,7 @@
+name: "brain-buddy"
+description: "BrainBuddy desktop development tasks"
+enabled: true
+
+tasksDir: ".it-runner/tasks"
+logsDir: ".it-runner/logs"
+cacheDir: ".it-runner/cache"

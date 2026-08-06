@@ -1,0 +1,27 @@
+version: "1"
+name: "desktop-dev"
+description: "Run the BrainBuddy Electron desktop app with hot reload"
+tags: ["dev", "desktop", "electron"]
+
+workspace:
+  workdir: "${PROJECT_ROOT}"
+
+processes:
+  - name: "electron-vite"
+    cmd: |-
+      cd "${PROJECT_ROOT}"
+      if [ ! -x "${PROJECT_ROOT}/node_modules/.bin/electron-vite" ]; then
+        npm ci
+      fi
+      exec npm run dev
+    ports: [5173]
+    startupTimeoutSeconds: 45
+
+health:
+  http:
+    - name: "renderer dev server"
+      url: "http://127.0.0.1:5173/"
+      timeoutSeconds: 3
+
+watch:
+  stateFile: "${PROJECT_ROOT}/.it-runner/states/desktop-dev.STATE"

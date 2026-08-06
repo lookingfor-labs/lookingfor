@@ -1,0 +1,5 @@
+cache/
+logs/
+states/*
+!states/.gitkeep
+envs/010-local.env
