@@ -8,7 +8,8 @@ starts a browser preview on the declared renderer port instead.
 
 The task installs locked npm dependencies with `npm ci` only when
 `node_modules/.bin/electron-vite` is missing. It then runs `npm run dev` and
-waits for the renderer development server on `127.0.0.1:15174`. The task uses
+waits for the renderer development server on `0.0.0.0:15174`; the health probe
+checks it through `127.0.0.1:15174`. The task uses
 `mise` with the Node version declared in
 `tasks/desktop-dev/envs/000-defaults.env`, so it does not inherit an outdated
 Node runtime from the it-runner host. If a graphical Agentflow-hosted runner is
