@@ -1,21 +1,11 @@
 import type {
   CredentialDraft,
   DetectedEntity,
-  EntityType,
   ProtectionDecision,
   ProtectionPlan,
   ProtectionPreview,
   SafetyCheck
 } from "@brainbuddy/domain";
-
-const credentialTypes: ReadonlySet<EntityType> = new Set([
-  "password",
-  "api_key",
-  "private_key",
-  "github_token",
-  "jwt",
-  "high_entropy_secret"
-]);
 
 export interface BuildProtectionPlanInput {
   readonly text: string;
@@ -46,10 +36,6 @@ export function buildProtectionPlan(input: BuildProtectionPlanInput): Protection
       throw new Error("Every detected entity requires one protection decision");
     }
     const { policy } = decision;
-    if (policy === "move_to_vault" && !credentialTypes.has(entity.type)) {
-      throw new Error("Only credential entities can move to the vault");
-    }
-
     const credentialId = policy === "move_to_vault"
       ? decision.credentialId ?? input.credentialIdFactory()
       : undefined;

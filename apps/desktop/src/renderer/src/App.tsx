@@ -50,7 +50,7 @@ const riskLabels: Readonly<Record<RiskLevel, string>> = {
   critical: "严重"
 };
 
-const credentialTypes: ReadonlySet<EntityType> = new Set([
+const secretTypes: ReadonlySet<EntityType> = new Set([
   "password", "api_key", "private_key", "github_token", "jwt", "high_entropy_secret"
 ]);
 
@@ -226,7 +226,7 @@ function EntityCard({ entity, policy, onChange }: {
     <div className="entity-reason"><small>识别原因</small><p>{entity.reason.join(" · ")}</p></div>
     <label className="entity-policy"><small>当前策略</small><select value={policy} onChange={(event) => void onChange(entity, event.target.value as ProtectionPolicy)}>
       <option value="keep_original">{policyLabels.keep_original}</option>
-      {credentialTypes.has(entity.type) && <option value="move_to_vault">{policyLabels.move_to_vault}</option>}
+      <option value="move_to_vault">{policyLabels.move_to_vault}</option>
     </select></label>
   </article>;
 }
@@ -311,7 +311,7 @@ async function createBrowserRuntime() {
 }
 
 function maskSensitiveText(entity: DetectedEntity): string {
-  if (!credentialTypes.has(entity.type)) return entity.text;
+  if (!secretTypes.has(entity.type)) return entity.text;
   if (entity.text.length <= 6) return "••••••";
   return `${entity.text.slice(0, 3)}${"•".repeat(Math.min(12, entity.text.length - 5))}${entity.text.slice(-2)}`;
 }

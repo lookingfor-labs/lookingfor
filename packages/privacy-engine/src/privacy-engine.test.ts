@@ -190,14 +190,21 @@ describe("buildProtectionPlan", () => {
     );
   });
 
-  it("rejects vault storage for non-credential entities", () => {
+  it("lets the user extract a medium-risk entity despite its keep-original default", () => {
     const entity = engine.analyze("张伟").entities[0]!;
-    expect(() => buildProtectionPlan({
+    const plan = buildProtectionPlan({
       text: "张伟",
       entities: [entity],
       decisions: [{ start: entity.start, end: entity.end, policy: "move_to_vault" }],
       credentialIdFactory: () => credentialId
-    })).toThrow("Only credential entities can move to the vault");
+    });
+
+    expect(plan.memoryContent).toBe(`[CREDENTIAL:${credentialId}]`);
+    expect(plan.credentialDrafts[0]).toEqual(expect.objectContaining({
+      credentialId,
+      entityType: "person",
+      secret: "张伟"
+    }));
   });
 
   it("reuses a confirmed credential id so preview and persistence share one lookup key", () => {
