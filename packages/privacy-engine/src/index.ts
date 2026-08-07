@@ -13,6 +13,7 @@ import {
 import type { Recognizer } from "./types";
 
 export * from "./recognizers";
+export * from "./credential-id";
 export * from "./protection-plan";
 export * from "./types";
 

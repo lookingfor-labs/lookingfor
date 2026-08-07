@@ -276,7 +276,7 @@ async function previewProtection(request: ProtectionRequest): Promise<Protection
     text: request.text,
     entities: analysis.entities,
     decisions: request.decisions,
-    credentialIdFactory: () => crypto.randomUUID()
+    credentialIdFactory: () => runtime.createCredentialId(crypto)
   }));
 }
 
@@ -288,7 +288,7 @@ async function saveDemoCandidate(request: ProtectionRequest): Promise<DemoSaveRe
     text: request.text,
     entities: analysis.entities,
     decisions: request.decisions,
-    credentialIdFactory: () => crypto.randomUUID()
+    credentialIdFactory: () => runtime.createCredentialId(crypto)
   });
   return runtime.session.save(plan);
 }
@@ -302,12 +302,12 @@ function browserRuntime() {
 }
 
 async function createBrowserRuntime() {
-  const [{ DemoMemorySession }, { buildProtectionPlan, PrivacyEngine, toProtectionPreview }] = await Promise.all([
+  const [{ DemoMemorySession }, { buildProtectionPlan, createCredentialId, PrivacyEngine, toProtectionPreview }] = await Promise.all([
     import("@brainbuddy/memory-engine"),
     import("@brainbuddy/privacy-engine")
   ]);
   const engine = new PrivacyEngine({ knownEntities: [{ id: "demo-person-zhang-wei", canonicalName: "张伟", entityType: "person", token: "[PERSON_A]", aliases: [], defaultPolicy: "keep_original" }] });
-  return { engine, session: new DemoMemorySession(), buildProtectionPlan, toProtectionPreview };
+  return { engine, session: new DemoMemorySession(), buildProtectionPlan, createCredentialId, toProtectionPreview };
 }
 
 function maskSensitiveText(entity: DetectedEntity): string {
