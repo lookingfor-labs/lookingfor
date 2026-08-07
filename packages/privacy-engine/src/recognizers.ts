@@ -75,6 +75,55 @@ export class GitHubTokenRecognizer implements Recognizer {
   }
 }
 
+export class ApiKeyRecognizer implements Recognizer {
+  readonly id = "api-key";
+
+  recognize(text: string): readonly DetectedEntity[] {
+    const contextual = collectMatches(
+      text,
+      /(?:\b(?:api[\s_-]*key|access[\s_-]+key|secret[\s_-]+key|key)\b|密钥|秘钥)\s*(?:是|为|is|[:：=])\s*["']?([A-Za-z0-9][A-Za-z0-9_!@#$%^&*+./=~-]{11,})["']?/giu,
+      (match) => {
+        const secret = match[1];
+        if (!secret) return undefined;
+        const start = match.index + match[0].indexOf(secret);
+        return this.entity(secret, start, "API Key 关键词附近出现疑似凭证");
+      }
+    );
+    const prefixed = collectMatches(
+      text,
+      /(?<![A-Za-z0-9_])(sk-([A-Za-z0-9][A-Za-z0-9_-]{19,}))(?![A-Za-z0-9_-])/gu,
+      (match) => {
+        const secret = match[1];
+        const suffix = match[2];
+        if (!secret || !suffix || (!/[A-Z]/u.test(suffix) && !/\d/u.test(suffix))) {
+          return undefined;
+        }
+        const start = match.index + match[0].indexOf(secret);
+        return this.entity(secret, start, "匹配高置信度 sk- API Key 格式");
+      }
+    );
+
+    return [...new Map([...contextual, ...prefixed].map((entity) => [
+      `${entity.start}:${entity.end}`,
+      entity
+    ])).values()];
+  }
+
+  private entity(text: string, start: number, reason: string): DetectedEntity {
+    return {
+      text,
+      start,
+      end: start + text.length,
+      type: "api_key",
+      risk: "critical",
+      reason: [reason],
+      suggestedPolicy: "move_to_vault",
+      recognizerId: this.id,
+      replacementToken: "[CREDENTIAL_API_KEY]"
+    };
+  }
+}
+
 export class JwtRecognizer implements Recognizer {
   readonly id = "jwt";
 

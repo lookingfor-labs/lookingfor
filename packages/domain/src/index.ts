@@ -1,5 +1,6 @@
 export type EntityType =
   | "password"
+  | "api_key"
   | "email"
   | "private_key"
   | "github_token"

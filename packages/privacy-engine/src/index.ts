@@ -1,6 +1,7 @@
 import type { DetectedEntity, EntityMapping, PrivacyAnalysis } from "@brainbuddy/domain";
 import { resolveOverlaps } from "./helpers";
 import {
+  ApiKeyRecognizer,
   EmailRecognizer,
   GitHubTokenRecognizer,
   HighEntropySecretRecognizer,
@@ -26,6 +27,7 @@ export class PrivacyEngine {
   constructor(options: PrivacyEngineOptions = {}) {
     this.recognizers = [
       new PrivateKeyRecognizer(),
+      new ApiKeyRecognizer(),
       new GitHubTokenRecognizer(),
       new JwtRecognizer(),
       new KeywordRecognizer(),

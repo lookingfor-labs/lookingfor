@@ -1,6 +1,7 @@
 import type { EntityMapping } from "@brainbuddy/domain";
 import { describe, expect, it } from "vitest";
 import {
+  ApiKeyRecognizer,
   EmailRecognizer,
   GitHubTokenRecognizer,
   HighEntropySecretRecognizer,
@@ -39,6 +40,31 @@ describe("first recognizers", () => {
     );
     expect(tokens).toHaveLength(2);
     expect(tokens.every((token) => token.type === "github_token")).toBe(true);
+  });
+
+  it("detects a low-entropy API key when key context is explicit", () => {
+    const [entity] = new ApiKeyRecognizer().recognize(
+      "我的中转站的 key 是 sk-sdsdasdadasdasdasdaniinnz "
+    );
+    expect(entity).toMatchObject({
+      text: "sk-sdsdasdadasdasdasdaniinnz",
+      type: "api_key",
+      risk: "critical",
+      suggestedPolicy: "move_to_vault",
+      replacementToken: "[CREDENTIAL_API_KEY]"
+    });
+  });
+
+  it("detects a strong standalone sk-prefixed API key", () => {
+    const [entity] = new ApiKeyRecognizer().recognize("使用 sk-AbCdEfGhIjKlMnOpQrSt1234 调试");
+    expect(entity).toMatchObject({ type: "api_key", risk: "critical" });
+  });
+
+  it("does not treat key-like prose or short values as API keys", () => {
+    const recognizer = new ApiKeyRecognizer();
+    expect(recognizer.recognize("keyboard 是 development-environment")).toHaveLength(0);
+    expect(recognizer.recognize("key 是 sk-short")).toHaveLength(0);
+    expect(recognizer.recognize("组件名是 sk-design-system-component")).toHaveLength(0);
   });
 
   it("detects JWTs", () => {
@@ -83,5 +109,14 @@ describe("PrivacyEngine", () => {
     expect(result.protectedPreview).not.toContain("luyong@example.com");
     expect(result.protectedPreview).not.toContain("A9x!4mQ2#pL7");
     expect(result.analyzedAt).toBe("2025-01-01T00:00:00.000Z");
+  });
+
+  it("removes a contextual API key from the protected preview", () => {
+    const secret = "sk-sdsdasdadasdasdasdaniinnz";
+    const result = new PrivacyEngine().analyze(`我的中转站的 key 是 ${secret}`);
+    expect(result.entities).toHaveLength(1);
+    expect(result.entities[0]?.type).toBe("api_key");
+    expect(result.protectedPreview).toBe("我的中转站的 key 是 [CREDENTIAL_API_KEY]");
+    expect(result.protectedPreview).not.toContain(secret);
   });
 });

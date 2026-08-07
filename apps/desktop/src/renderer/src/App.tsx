@@ -5,6 +5,7 @@ const sample = "今天张伟把 Figma 登录密码发给我，账号是 luyong@e
 
 const typeLabels: Readonly<Record<DetectedEntity["type"], string>> = {
   password: "密码",
+  api_key: "API Key",
   email: "邮箱 / 账号",
   private_key: "私钥",
   github_token: "GitHub Token",
@@ -167,7 +168,7 @@ function EntityCard({ entity }: { readonly entity: DetectedEntity }): JSX.Elemen
 }
 
 function maskSensitiveText(entity: DetectedEntity): string {
-  if (!["password", "private_key", "github_token", "jwt", "high_entropy_secret"].includes(entity.type)) {
+  if (!["password", "api_key", "private_key", "github_token", "jwt", "high_entropy_secret"].includes(entity.type)) {
     return entity.text;
   }
   if (entity.text.length <= 6) return "••••••";
