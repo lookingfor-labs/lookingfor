@@ -1,9 +1,13 @@
 import { join } from "node:path";
 import { app, BrowserWindow, ipcMain, shell } from "electron";
-import { PrivacyEngine } from "@brainbuddy/privacy-engine";
+import { DemoMemorySession } from "@brainbuddy/memory-engine";
+import { buildProtectionPlan, PrivacyEngine, toProtectionPreview } from "@brainbuddy/privacy-engine";
 import {
   ANALYZE_INPUT_CHANNEL,
-  AnalyzeInputRequestSchema
+  AnalyzeInputRequestSchema,
+  PREVIEW_PROTECTION_CHANNEL,
+  ProtectionRequestSchema,
+  SAVE_DEMO_CANDIDATE_CHANNEL
 } from "@brainbuddy/shared-contracts";
 
 const privacyEngine = new PrivacyEngine({
@@ -18,6 +22,13 @@ const privacyEngine = new PrivacyEngine({
     }
   ]
 });
+const demoMemorySession = new DemoMemorySession();
+
+function createProtectionPlan(request: unknown) {
+  const { text, decisions } = ProtectionRequestSchema.parse(request);
+  const analysis = privacyEngine.analyze(text);
+  return buildProtectionPlan({ text, entities: analysis.entities, decisions });
+}
 
 function createWindow(): void {
   const window = new BrowserWindow({
@@ -54,6 +65,12 @@ app.whenReady().then(() => {
     const { text } = AnalyzeInputRequestSchema.parse(request);
     return privacyEngine.analyze(text);
   });
+  ipcMain.handle(PREVIEW_PROTECTION_CHANNEL, (_event, request: unknown) =>
+    toProtectionPreview(createProtectionPlan(request))
+  );
+  ipcMain.handle(SAVE_DEMO_CANDIDATE_CHANNEL, (_event, request: unknown) =>
+    demoMemorySession.save(createProtectionPlan(request))
+  );
   createWindow();
 
   app.on("activate", () => {

@@ -1,7 +1,8 @@
-import type { EntityMapping } from "@brainbuddy/domain";
+import type { EntityMapping, ProtectionDecision } from "@brainbuddy/domain";
 import { describe, expect, it } from "vitest";
 import {
   ApiKeyRecognizer,
+  buildProtectionPlan,
   EmailRecognizer,
   GitHubTokenRecognizer,
   HighEntropySecretRecognizer,
@@ -118,5 +119,75 @@ describe("PrivacyEngine", () => {
     expect(result.entities[0]?.type).toBe("api_key");
     expect(result.protectedPreview).toBe("我的中转站的 key 是 [CREDENTIAL_API_KEY]");
     expect(result.protectedPreview).not.toContain(secret);
+  });
+});
+
+describe("buildProtectionPlan", () => {
+  const input = "张伟的账号 demo@example.com，key 是 sk-demoExample1234567890";
+  const engine = new PrivacyEngine({
+    knownEntities: [{
+      id: "person-1",
+      canonicalName: "张伟",
+      entityType: "person",
+      token: "[PERSON_A]",
+      aliases: [],
+      defaultPolicy: "replace_with_token"
+    }]
+  });
+
+  it("builds memory, protected, and credential views from confirmed decisions", () => {
+    const entities = engine.analyze(input).entities;
+    const decisions: ProtectionDecision[] = entities.map((entity) => ({
+      start: entity.start,
+      end: entity.end,
+      policy: entity.suggestedPolicy
+    }));
+    const plan = buildProtectionPlan({ text: input, entities, decisions });
+
+    expect(plan.memoryContent).toBe(
+      "[PERSON_A]的账号 demo@example.com，key 是 [CREDENTIAL_API_KEY]"
+    );
+    expect(plan.protectedContent).toBe(
+      "[PERSON_A]的账号 [EMAIL]，key 是 [CREDENTIAL_API_KEY]"
+    );
+    expect(plan.credentialDrafts).toEqual([
+      expect.objectContaining({
+        ref: "[CREDENTIAL_API_KEY]",
+        entityType: "api_key",
+        secret: "sk-demoExample1234567890"
+      })
+    ]);
+    expect(plan.safetyChecks.every((check) => check.passed)).toBe(true);
+  });
+
+  it("never exposes high-risk values to the protected view even when keep-original is selected", () => {
+    const analysis = new PrivacyEngine().analyze("账号 demo@example.com");
+    const entity = analysis.entities[0]!;
+    const plan = buildProtectionPlan({
+      text: "账号 demo@example.com",
+      entities: analysis.entities,
+      decisions: [{ start: entity.start, end: entity.end, policy: "keep_original" }]
+    });
+
+    expect(plan.memoryContent).toBe("账号 demo@example.com");
+    expect(plan.protectedContent).toBe("账号 [EMAIL]");
+    expect(plan.safetyChecks.find((check) => check.id === "protected_view_secret_free")?.passed)
+      .toBe(true);
+  });
+
+  it("rejects incomplete decisions instead of silently using defaults", () => {
+    const entities = engine.analyze(input).entities;
+    expect(() => buildProtectionPlan({ text: input, entities, decisions: [] })).toThrow(
+      "Every detected entity requires one protection decision"
+    );
+  });
+
+  it("rejects vault storage for non-credential entities", () => {
+    const entity = engine.analyze("张伟").entities[0]!;
+    expect(() => buildProtectionPlan({
+      text: "张伟",
+      entities: [entity],
+      decisions: [{ start: entity.start, end: entity.end, policy: "move_to_vault" }]
+    })).toThrow("Only credential entities can move to the vault");
   });
 });

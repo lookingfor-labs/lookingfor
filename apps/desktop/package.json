@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@brainbuddy/domain": "*",
+    "@brainbuddy/memory-engine": "*",
     "@brainbuddy/privacy-engine": "*",
     "@brainbuddy/shared-contracts": "*",
     "react": "^18.3.1",

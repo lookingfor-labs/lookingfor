@@ -37,6 +37,56 @@ export interface PrivacyAnalysis {
   readonly analyzedAt: string;
 }
 
+export interface ProtectionDecision {
+  readonly start: number;
+  readonly end: number;
+  readonly policy: ProtectionPolicy;
+}
+
+export interface CredentialDraft {
+  readonly ref: string;
+  readonly entityType: EntityType;
+  readonly secret: string;
+  readonly maskedValue: string;
+}
+
+export interface SafetyCheck {
+  readonly id: "memory_secret_free" | "protected_view_secret_free" | "credential_refs_resolved";
+  readonly label: string;
+  readonly passed: boolean;
+  readonly detail: string;
+}
+
+export interface ProtectionPlan {
+  readonly memoryContent: string;
+  readonly protectedContent: string;
+  readonly credentialDrafts: readonly CredentialDraft[];
+  readonly safetyChecks: readonly SafetyCheck[];
+}
+
+export interface CredentialPreview {
+  readonly ref: string;
+  readonly entityType: EntityType;
+  readonly maskedValue: string;
+}
+
+export interface ProtectionPreview {
+  readonly memoryContent: string;
+  readonly protectedContent: string;
+  readonly credentials: readonly CredentialPreview[];
+  readonly safetyChecks: readonly SafetyCheck[];
+  readonly readyToSave: boolean;
+}
+
+export interface DemoSaveReceipt {
+  readonly memoryId: string;
+  readonly protectedMemoryId: string;
+  readonly credentialIds: readonly string[];
+  readonly savedAt: string;
+  readonly storage: "memory_session";
+  readonly preview: ProtectionPreview;
+}
+
 export interface Memory {
   readonly id: string;
   readonly originalContent: string;
