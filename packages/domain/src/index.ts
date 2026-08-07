@@ -52,14 +52,14 @@ export interface CredentialDraft {
 }
 
 export interface SafetyCheck {
-  readonly id: "memory_secret_free" | "credential_refs_resolved";
+  readonly id: "protected_content_secret_free" | "credential_refs_resolved";
   readonly label: string;
   readonly passed: boolean;
   readonly detail: string;
 }
 
 export interface ProtectionPlan {
-  readonly memoryContent: string;
+  readonly protectedContent: string;
   readonly credentialDrafts: readonly CredentialDraft[];
   readonly safetyChecks: readonly SafetyCheck[];
 }
@@ -74,14 +74,13 @@ export interface CredentialPreview {
 }
 
 export interface ProtectionPreview {
-  readonly memoryContent: string;
+  readonly protectedContent: string;
   readonly credentials: readonly CredentialPreview[];
   readonly safetyChecks: readonly SafetyCheck[];
   readonly readyToSave: boolean;
 }
 
 export interface DemoSaveReceipt {
-  readonly memoryId: string;
   readonly sourceId: string;
   readonly credentialIds: readonly string[];
   readonly savedAt: string;
@@ -89,10 +88,9 @@ export interface DemoSaveReceipt {
   readonly preview: ProtectionPreview;
 }
 
-export interface DemoMemorySummary {
-  readonly memoryId: string;
+export interface DemoSourceSummary {
   readonly sourceId: string;
-  readonly memoryContent: string;
+  readonly protectedContent: string;
   readonly credentialIds: readonly string[];
   readonly savedAt: string;
 }
@@ -103,13 +101,12 @@ export interface DemoSourceReveal {
   readonly savedAt: string;
 }
 
-export interface Memory {
-  readonly id: string;
-  readonly originalContent: string;
-  readonly createdAt: string;
+export interface MemoryFile {
+  readonly path: string;
+  readonly content: string;
+  readonly sourceIds: readonly string[];
+  readonly credentialIds: readonly string[];
   readonly updatedAt: string;
-  readonly version: number;
-  readonly status: "active" | "deleted";
 }
 
 export interface EntityMapping {

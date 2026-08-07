@@ -4,7 +4,7 @@ import {
   ANALYZE_INPUT_CHANNEL,
   PREVIEW_PROTECTION_CHANNEL,
   REVEAL_DEMO_SOURCE_CHANNEL,
-  SEARCH_DEMO_MEMORIES_CHANNEL,
+  SEARCH_DEMO_SOURCES_CHANNEL,
   SAVE_DEMO_CANDIDATE_CHANNEL
 } from "@brainbuddy/shared-contracts";
 
@@ -12,7 +12,7 @@ const api: BrainBuddyApi = {
   analyzeInput: (request) => ipcRenderer.invoke(ANALYZE_INPUT_CHANNEL, request),
   previewProtection: (request) => ipcRenderer.invoke(PREVIEW_PROTECTION_CHANNEL, request),
   saveDemoCandidate: (request) => ipcRenderer.invoke(SAVE_DEMO_CANDIDATE_CHANNEL, request),
-  searchDemoMemories: (request) => ipcRenderer.invoke(SEARCH_DEMO_MEMORIES_CHANNEL, request),
+  searchDemoSources: (request) => ipcRenderer.invoke(SEARCH_DEMO_SOURCES_CHANNEL, request),
   revealDemoSource: (request) => ipcRenderer.invoke(REVEAL_DEMO_SOURCE_CHANNEL, request)
 };
 

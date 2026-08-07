@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type {
   DemoSaveReceipt,
-  DemoMemorySummary,
+  DemoSourceSummary,
   DemoSourceReveal,
   PrivacyAnalysis,
   ProtectionPreview
@@ -10,7 +10,7 @@ import type {
 export const ANALYZE_INPUT_CHANNEL = "privacy:analyze-input";
 export const PREVIEW_PROTECTION_CHANNEL = "privacy:preview-protection";
 export const SAVE_DEMO_CANDIDATE_CHANNEL = "memory:save-demo-candidate";
-export const SEARCH_DEMO_MEMORIES_CHANNEL = "memory:search-demo-memories";
+export const SEARCH_DEMO_SOURCES_CHANNEL = "source:search-demo-sources";
 export const REVEAL_DEMO_SOURCE_CHANNEL = "memory:reveal-demo-source";
 
 export const AnalyzeInputRequestSchema = z.object({
@@ -31,7 +31,7 @@ export const ProtectionRequestSchema = z.object({
 
 export type ProtectionRequest = z.infer<typeof ProtectionRequestSchema>;
 
-export const SearchDemoMemoriesRequestSchema = z.object({
+export const SearchDemoSourcesRequestSchema = z.object({
   query: z.string().max(2_000)
 });
 
@@ -39,13 +39,13 @@ export const RevealDemoSourceRequestSchema = z.object({
   sourceId: z.string().regex(/^SOURCE_DEMO_\d{3,}$/u)
 });
 
-export type SearchDemoMemoriesRequest = z.infer<typeof SearchDemoMemoriesRequestSchema>;
+export type SearchDemoSourcesRequest = z.infer<typeof SearchDemoSourcesRequestSchema>;
 export type RevealDemoSourceRequest = z.infer<typeof RevealDemoSourceRequestSchema>;
 
 export interface BrainBuddyApi {
   analyzeInput(request: AnalyzeInputRequest): Promise<PrivacyAnalysis>;
   previewProtection(request: ProtectionRequest): Promise<ProtectionPreview>;
   saveDemoCandidate(request: ProtectionRequest): Promise<DemoSaveReceipt>;
-  searchDemoMemories(request: SearchDemoMemoriesRequest): Promise<readonly DemoMemorySummary[]>;
+  searchDemoSources(request: SearchDemoSourcesRequest): Promise<readonly DemoSourceSummary[]>;
   revealDemoSource(request: RevealDemoSourceRequest): Promise<DemoSourceReveal>;
 }

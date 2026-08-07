@@ -148,7 +148,7 @@ describe("buildProtectionPlan", () => {
       credentialIdFactory: () => credentialId
     });
 
-    expect(plan.memoryContent).toBe(
+    expect(plan.protectedContent).toBe(
       "张伟的账号 demo@example.com，key 是 [CREDENTIAL:550e8400-e29b-41d4-a716-446655440000]"
     );
     expect(plan.credentialDrafts).toEqual([
@@ -172,7 +172,7 @@ describe("buildProtectionPlan", () => {
       credentialIdFactory: () => credentialId
     });
 
-    expect(plan.memoryContent).toBe("账号 demo@example.com");
+    expect(plan.protectedContent).toBe("账号 demo@example.com");
     expect(plan.credentialDrafts).toHaveLength(0);
   });
 
@@ -192,7 +192,7 @@ describe("buildProtectionPlan", () => {
       credentialIdFactory: () => credentialId
     });
 
-    expect(plan.memoryContent).toBe(`[CREDENTIAL:${credentialId}]`);
+    expect(plan.protectedContent).toBe(`[CREDENTIAL:${credentialId}]`);
     expect(plan.credentialDrafts[0]).toEqual(expect.objectContaining({
       credentialId,
       entityType: "person",
@@ -215,6 +215,6 @@ describe("buildProtectionPlan", () => {
     });
 
     expect(plan.credentialDrafts[0]?.credentialId).toBe(credentialId);
-    expect(plan.memoryContent).toContain(`[CREDENTIAL:${credentialId}]`);
+    expect(plan.protectedContent).toContain(`[CREDENTIAL:${credentialId}]`);
   });
 });

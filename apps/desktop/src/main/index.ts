@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { app, BrowserWindow, ipcMain, shell } from "electron";
-import { DemoMemorySession } from "@brainbuddy/memory-engine";
+import { DemoSourceSession } from "@brainbuddy/memory-engine";
 import { buildProtectionPlan, PrivacyEngine, toProtectionPreview } from "@brainbuddy/privacy-engine";
 import {
   ANALYZE_INPUT_CHANNEL,
@@ -10,8 +10,8 @@ import {
   ProtectionRequestSchema,
   REVEAL_DEMO_SOURCE_CHANNEL,
   RevealDemoSourceRequestSchema,
-  SEARCH_DEMO_MEMORIES_CHANNEL,
-  SearchDemoMemoriesRequestSchema,
+  SEARCH_DEMO_SOURCES_CHANNEL,
+  SearchDemoSourcesRequestSchema,
   SAVE_DEMO_CANDIDATE_CHANNEL
 } from "@brainbuddy/shared-contracts";
 
@@ -27,7 +27,7 @@ const privacyEngine = new PrivacyEngine({
     }
   ]
 });
-const demoMemorySession = new DemoMemorySession();
+const demoSourceSession = new DemoSourceSession();
 
 function createProtectionPlan(request: unknown) {
   const { text, decisions } = ProtectionRequestSchema.parse(request);
@@ -79,15 +79,15 @@ app.whenReady().then(() => {
     toProtectionPreview(createProtectionPlan(request))
   );
   ipcMain.handle(SAVE_DEMO_CANDIDATE_CHANNEL, (_event, request: unknown) =>
-    demoMemorySession.save(createProtectionPlan(request), ProtectionRequestSchema.parse(request).text)
+    demoSourceSession.save(createProtectionPlan(request), ProtectionRequestSchema.parse(request).text)
   );
-  ipcMain.handle(SEARCH_DEMO_MEMORIES_CHANNEL, (_event, request: unknown) => {
-    const { query } = SearchDemoMemoriesRequestSchema.parse(request);
-    return demoMemorySession.search(query);
+  ipcMain.handle(SEARCH_DEMO_SOURCES_CHANNEL, (_event, request: unknown) => {
+    const { query } = SearchDemoSourcesRequestSchema.parse(request);
+    return demoSourceSession.search(query);
   });
   ipcMain.handle(REVEAL_DEMO_SOURCE_CHANNEL, (_event, request: unknown) => {
     const { sourceId } = RevealDemoSourceRequestSchema.parse(request);
-    return demoMemorySession.revealSource(sourceId);
+    return demoSourceSession.revealSource(sourceId);
   });
   createWindow();
 

@@ -24,7 +24,7 @@ export function buildProtectionPlan(input: BuildProtectionPlanInput): Protection
   }
 
   let cursor = 0;
-  let memoryContent = "";
+  let protectedContent = "";
   const credentialDrafts: CredentialDraft[] = [];
   const credentialIds = new Set<string>();
 
@@ -46,8 +46,8 @@ export function buildProtectionPlan(input: BuildProtectionPlanInput): Protection
     const token = policy === "move_to_vault"
       ? `[CREDENTIAL:${credentialId}]`
       : entity.replacementToken ?? `[${entity.type.toUpperCase()}]`;
-    memoryContent += input.text.slice(cursor, entity.start);
-    memoryContent += memoryValue(entity, policy, token);
+    protectedContent += input.text.slice(cursor, entity.start);
+    protectedContent += protectedValue(entity, policy, token);
 
     if (policy === "move_to_vault" && credentialId) {
       credentialDrafts.push({
@@ -63,13 +63,13 @@ export function buildProtectionPlan(input: BuildProtectionPlanInput): Protection
     cursor = entity.end;
   }
 
-  memoryContent += input.text.slice(cursor);
+  protectedContent += input.text.slice(cursor);
   const safetyChecks = buildSafetyChecks(
     credentialDrafts,
-    memoryContent
+    protectedContent
   );
 
-  return { memoryContent, credentialDrafts, safetyChecks };
+  return { protectedContent, credentialDrafts, safetyChecks };
 }
 
 export function entityKey(entity: Pick<DetectedEntity, "start" | "end">): string {
@@ -78,7 +78,7 @@ export function entityKey(entity: Pick<DetectedEntity, "start" | "end">): string
 
 export function toProtectionPreview(plan: ProtectionPlan): ProtectionPreview {
   return {
-    memoryContent: plan.memoryContent,
+    protectedContent: plan.protectedContent,
     credentials: plan.credentialDrafts.map(({ credentialId, ref, start, end, entityType, maskedValue }) => ({
       credentialId,
       ref,
@@ -98,7 +98,7 @@ function validateEntity(text: string, entity: DetectedEntity, cursor: number): v
   }
 }
 
-function memoryValue(entity: DetectedEntity, policy: ProtectionDecision["policy"], token: string): string {
+function protectedValue(entity: DetectedEntity, policy: ProtectionDecision["policy"], token: string): string {
   return policy === "move_to_vault" ? token : entity.text;
 }
 
@@ -108,23 +108,23 @@ function isCredentialId(value: string): boolean {
 
 function buildSafetyChecks(
   credentials: readonly CredentialDraft[],
-  memoryContent: string
+  protectedContent: string
 ): SafetyCheck[] {
-  const memorySecretFree = credentials.every((credential) => !memoryContent.includes(credential.secret));
-  const refsResolved = credentials.every((credential) => memoryContent.includes(credential.ref));
+  const protectedContentSecretFree = credentials.every((credential) => !protectedContent.includes(credential.secret));
+  const refsResolved = credentials.every((credential) => protectedContent.includes(credential.ref));
 
   return [
     {
-      id: "memory_secret_free",
-      label: "普通记忆正文不包含已抽离 Secret",
-      passed: memorySecretFree,
-      detail: memorySecretFree ? "已抽离的凭证只存在于凭证草稿" : "普通记忆正文仍包含已抽离凭证"
+      id: "protected_content_secret_free",
+      label: "AI 可见输入不包含已抽离 Secret",
+      passed: protectedContentSecretFree,
+      detail: protectedContentSecretFree ? "已抽离的凭据只存在于凭据草稿" : "AI 可见输入仍包含已抽离凭据"
     },
     {
       id: "credential_refs_resolved",
       label: "凭证引用可追踪",
       passed: refsResolved,
-      detail: refsResolved ? "本地记忆保留对应凭证引用" : "存在无法追踪的凭证引用"
+      detail: refsResolved ? "AI 可见输入保留对应凭据引用" : "存在无法追踪的凭据引用"
     }
   ];
 }

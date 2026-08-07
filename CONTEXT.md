@@ -13,8 +13,8 @@ The preserved, private record of one Original Input. It is not part of normal me
 _Avoid_: Log, audit log, memory backup
 
 **Memory（本地记忆）**:
-The user-approved content used by local search and shown to AI. It may retain original text and contain Source References or Credential References.
-_Avoid_: Protected view, AI copy, source record
+A mutable local file that AI can read, create, and update through controlled operations. It may reference zero or more Source Records and Credentials.
+_Avoid_: Database memory row, protected view, source record
 
 **Credential（凭据）**:
 A value the user chose to extract from Memory and keep as a separately retrievable private record.
@@ -26,9 +26,9 @@ _Avoid_: Redaction, placeholder, source record
 The stable identity of one Source Record.
 _Avoid_: Log ID, memory ID
 
-**Memory ID**:
-The stable identity of one Memory.
-_Avoid_: Source ID, document position
+**Memory Path**:
+The controlled local path that locates a Memory file for reading or writing.
+_Avoid_: Memory ID, arbitrary filesystem path
 
 **Credential ID**:
 The stable identity of one Credential.

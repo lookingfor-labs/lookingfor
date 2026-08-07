@@ -1,25 +1,24 @@
 import type {
   CredentialDraft,
-  DemoMemorySummary,
+  DemoSourceSummary,
   DemoSaveReceipt,
   DemoSourceReveal,
   ProtectionPlan
 } from "@brainbuddy/domain";
 import { toProtectionPreview } from "@brainbuddy/privacy-engine";
 
-export interface DemoMemorySessionOptions {
+export interface DemoSourceSessionOptions {
   readonly now?: () => Date;
 }
 
-export class DemoMemorySession {
+export class DemoSourceSession {
   readonly #now: () => Date;
   #sequence = 0;
-  readonly #records = new Map<string, ProtectionPlan>();
   readonly #credentials = new Map<string, CredentialDraft>();
-  readonly #summaries = new Map<string, DemoMemorySummary>();
+  readonly #summaries = new Map<string, DemoSourceSummary>();
   readonly #sources = new Map<string, DemoSourceReveal>();
 
-  constructor(options: DemoMemorySessionOptions = {}) {
+  constructor(options: DemoSourceSessionOptions = {}) {
     this.#now = options.now ?? (() => new Date());
   }
 
@@ -34,22 +33,19 @@ export class DemoMemorySession {
 
     this.#sequence += 1;
     const suffix = String(this.#sequence).padStart(3, "0");
-    const memoryId = `MEMORY_DEMO_${suffix}`;
     const sourceId = `SOURCE_DEMO_${suffix}`;
     const savedAt = this.#now().toISOString();
     const storedPlan = {
       ...plan,
-      memoryContent: `${plan.memoryContent}\n\n来源：[SOURCE:${sourceId}]`
+      protectedContent: `${plan.protectedContent}\n\n来源：[SOURCE:${sourceId}]`
     };
     const preview = toProtectionPreview(storedPlan);
     const credentialIds = plan.credentialDrafts.map((credential) => credential.credentialId);
-    this.#records.set(memoryId, storedPlan);
     plan.credentialDrafts.forEach((credential) => this.#credentials.set(credential.credentialId, credential));
     this.#sources.set(sourceId, { sourceId, originalContent, savedAt });
-    this.#summaries.set(memoryId, { memoryId, sourceId, memoryContent: storedPlan.memoryContent, credentialIds, savedAt });
+    this.#summaries.set(sourceId, { sourceId, protectedContent: storedPlan.protectedContent, credentialIds, savedAt });
 
     return {
-      memoryId,
       sourceId,
       credentialIds,
       savedAt,
@@ -58,10 +54,10 @@ export class DemoMemorySession {
     };
   }
 
-  search(query: string): readonly DemoMemorySummary[] {
+  search(query: string): readonly DemoSourceSummary[] {
     const normalized = query.trim().toLocaleLowerCase();
     return [...this.#summaries.values()].filter((summary) =>
-      !normalized || [summary.memoryId, summary.sourceId, summary.memoryContent, ...summary.credentialIds]
+      !normalized || [summary.sourceId, summary.protectedContent, ...summary.credentialIds]
         .some((value) => value.toLocaleLowerCase().includes(normalized))
     );
   }
