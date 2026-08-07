@@ -4,7 +4,6 @@ import { DemoMemorySession } from "./index";
 
 const safePlan: ProtectionPlan = {
   memoryContent: "key 是 [CREDENTIAL:550e8400-e29b-41d4-a716-446655440000]",
-  protectedContent: "key 是 [CREDENTIAL:550e8400-e29b-41d4-a716-446655440000]",
   credentialDrafts: [{
     credentialId: "550e8400-e29b-41d4-a716-446655440000",
     ref: "[CREDENTIAL:550e8400-e29b-41d4-a716-446655440000]",
@@ -38,8 +37,7 @@ describe("DemoMemorySession", () => {
     const planWithoutCredentials = {
       ...safePlan,
       credentialDrafts: [],
-      memoryContent: "普通记忆",
-      protectedContent: "普通记忆"
+      memoryContent: "普通记忆"
     };
     session.save(planWithoutCredentials);
     expect(session.save(planWithoutCredentials).memoryId).toBe("MEMORY_DEMO_002");

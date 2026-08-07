@@ -192,7 +192,7 @@ export function App(): JSX.Element {
               )) : <p className="muted">没有需要抽离的凭据</p>}
             </div>
           </article>
-          <PreviewCard index="C" title="AI 可见版本" hint="仅此版本允许外发" content={preview?.protectedContent} />
+          <PreviewCard index="C" title="AI 实际可见" hint="与本地记忆完全一致" content={preview?.memoryContent} />
         </div>
       </section>
 
@@ -201,6 +201,7 @@ export function App(): JSX.Element {
           <p className="section-number">03 / 信任检查</p>
           <div className="check-list">
             {preview?.safetyChecks.map((check) => <p key={check.id} className={check.passed ? "passed" : "failed"}><b>{check.passed ? "✓" : "!"}</b><span>{check.label}<small>{check.detail}</small></span></p>)}
+            <p className="passed"><b>✓</b><span>AI 直接使用本地记忆<small>不再生成额外自动脱敏版本</small></span></p>
             <p className="passed"><b>✓</b><span>本阶段外发请求为 0<small>当前流程没有接入任何 AI 服务</small></span></p>
           </div>
         </div>
@@ -210,7 +211,7 @@ export function App(): JSX.Element {
         </div>
       </section>
 
-      {receipt && <section className="receipt" role="status"><div><span>已保存</span><strong>{receipt.memoryId}</strong></div><p>保护副本：{receipt.protectedMemoryId}<br />凭据记录：{receipt.credentialIds.length ? receipt.credentialIds.join("、") : "无"}</p><small>这是可验收的会话回执，不代表磁盘持久化。</small></section>}
+      {receipt && <section className="receipt" role="status"><div><span>已保存</span><strong>{receipt.memoryId}</strong></div><p>凭据记录：{receipt.credentialIds.length ? receipt.credentialIds.join("、") : "无"}</p><small>这是可验收的会话回执，不代表磁盘持久化。</small></section>}
     </main>
   );
 }

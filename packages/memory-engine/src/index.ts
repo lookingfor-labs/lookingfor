@@ -32,7 +32,6 @@ export class DemoMemorySession {
 
     return {
       memoryId,
-      protectedMemoryId: `PROTECTED_MEMORY_DEMO_${suffix}`,
       credentialIds: plan.credentialDrafts.map((credential) => credential.credentialId),
       savedAt: this.#now().toISOString(),
       storage: "memory_session",

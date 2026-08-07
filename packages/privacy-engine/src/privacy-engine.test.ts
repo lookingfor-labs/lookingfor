@@ -103,22 +103,20 @@ describe("PrivacyEngine", () => {
     expect(result.entities[0]?.type).toBe("github_token");
   });
 
-  it("builds a protected preview without secrets", () => {
+  it("reports detected entities without creating another content view", () => {
     const input = "Figma 账号 luyong@example.com，密码是 A9x!4mQ2#pL7。";
     const result = new PrivacyEngine({ now: () => new Date("2025-01-01T00:00:00.000Z") }).analyze(input);
-    expect(result.protectedPreview).toBe("Figma 账号 [EMAIL]，密码是 [CREDENTIAL_PASSWORD]。");
-    expect(result.protectedPreview).not.toContain("luyong@example.com");
-    expect(result.protectedPreview).not.toContain("A9x!4mQ2#pL7");
+    expect(result.entities.map((entity) => entity.type)).toEqual(["email", "password"]);
+    expect(result).not.toHaveProperty("protectedPreview");
     expect(result.analyzedAt).toBe("2025-01-01T00:00:00.000Z");
   });
 
-  it("removes a contextual API key from the protected preview", () => {
+  it("detects a contextual API key without transforming the input", () => {
     const secret = "sk-sdsdasdadasdasdasdaniinnz";
     const result = new PrivacyEngine().analyze(`我的中转站的 key 是 ${secret}`);
     expect(result.entities).toHaveLength(1);
     expect(result.entities[0]?.type).toBe("api_key");
-    expect(result.protectedPreview).toBe("我的中转站的 key 是 [CREDENTIAL_API_KEY]");
-    expect(result.protectedPreview).not.toContain(secret);
+    expect(result).not.toHaveProperty("protectedPreview");
   });
 });
 
@@ -136,7 +134,7 @@ describe("buildProtectionPlan", () => {
     }]
   });
 
-  it("builds memory, protected, and credential views from confirmed decisions", () => {
+  it("builds one memory view and credential drafts from confirmed decisions", () => {
     const entities = engine.analyze(input).entities;
     const decisions: ProtectionDecision[] = entities.map((entity) => ({
       start: entity.start,
@@ -153,9 +151,6 @@ describe("buildProtectionPlan", () => {
     expect(plan.memoryContent).toBe(
       "张伟的账号 demo@example.com，key 是 [CREDENTIAL:550e8400-e29b-41d4-a716-446655440000]"
     );
-    expect(plan.protectedContent).toBe(
-      "[PERSON_A]的账号 [EMAIL]，key 是 [CREDENTIAL:550e8400-e29b-41d4-a716-446655440000]"
-    );
     expect(plan.credentialDrafts).toEqual([
       expect.objectContaining({
         credentialId,
@@ -167,7 +162,7 @@ describe("buildProtectionPlan", () => {
     expect(plan.safetyChecks.every((check) => check.passed)).toBe(true);
   });
 
-  it("automatically protects high-risk values even when their storage policy keeps the original", () => {
+  it("keeps high-risk values in the shared memory and AI content when the user chooses keep", () => {
     const analysis = new PrivacyEngine().analyze("账号 demo@example.com");
     const entity = analysis.entities[0]!;
     const plan = buildProtectionPlan({
@@ -178,9 +173,7 @@ describe("buildProtectionPlan", () => {
     });
 
     expect(plan.memoryContent).toBe("账号 demo@example.com");
-    expect(plan.protectedContent).toBe("账号 [EMAIL]");
-    expect(plan.safetyChecks.find((check) => check.id === "protected_view_secret_free")?.passed)
-      .toBe(true);
+    expect(plan.credentialDrafts).toHaveLength(0);
   });
 
   it("rejects incomplete decisions instead of silently using defaults", () => {
@@ -222,6 +215,6 @@ describe("buildProtectionPlan", () => {
     });
 
     expect(plan.credentialDrafts[0]?.credentialId).toBe(credentialId);
-    expect(plan.protectedContent).toContain(`[CREDENTIAL:${credentialId}]`);
+    expect(plan.memoryContent).toContain(`[CREDENTIAL:${credentialId}]`);
   });
 });

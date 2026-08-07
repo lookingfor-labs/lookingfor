@@ -31,7 +31,6 @@ export interface DetectedEntity {
 export interface PrivacyAnalysis {
   readonly inputLength: number;
   readonly entities: readonly DetectedEntity[];
-  readonly protectedPreview: string;
   readonly analyzedAt: string;
 }
 
@@ -53,7 +52,7 @@ export interface CredentialDraft {
 }
 
 export interface SafetyCheck {
-  readonly id: "memory_secret_free" | "protected_view_secret_free" | "credential_refs_resolved";
+  readonly id: "memory_secret_free" | "credential_refs_resolved";
   readonly label: string;
   readonly passed: boolean;
   readonly detail: string;
@@ -61,7 +60,6 @@ export interface SafetyCheck {
 
 export interface ProtectionPlan {
   readonly memoryContent: string;
-  readonly protectedContent: string;
   readonly credentialDrafts: readonly CredentialDraft[];
   readonly safetyChecks: readonly SafetyCheck[];
 }
@@ -77,7 +75,6 @@ export interface CredentialPreview {
 
 export interface ProtectionPreview {
   readonly memoryContent: string;
-  readonly protectedContent: string;
   readonly credentials: readonly CredentialPreview[];
   readonly safetyChecks: readonly SafetyCheck[];
   readonly readyToSave: boolean;
@@ -85,7 +82,6 @@ export interface ProtectionPreview {
 
 export interface DemoSaveReceipt {
   readonly memoryId: string;
-  readonly protectedMemoryId: string;
   readonly credentialIds: readonly string[];
   readonly savedAt: string;
   readonly storage: "memory_session";
@@ -99,14 +95,6 @@ export interface Memory {
   readonly updatedAt: string;
   readonly version: number;
   readonly status: "active" | "deleted";
-}
-
-export interface ProtectedMemory {
-  readonly id: string;
-  readonly sourceMemoryId: string;
-  readonly protectedContent: string;
-  readonly privacyRuleVersion: string;
-  readonly generatedAt: string;
 }
 
 export interface EntityMapping {

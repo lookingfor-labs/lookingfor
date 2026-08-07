@@ -45,25 +45,7 @@ export class PrivacyEngine {
     return {
       inputLength: text.length,
       entities,
-      protectedPreview: buildProtectedPreview(text, entities),
       analyzedAt: this.now().toISOString()
     };
   }
-}
-
-export function buildProtectedPreview(text: string, entities: readonly DetectedEntity[]): string {
-  let cursor = 0;
-  let output = "";
-  for (const entity of [...entities].sort((left, right) => left.start - right.start)) {
-    output += text.slice(cursor, entity.start);
-    output += entity.replacementToken ?? policyFallback(entity);
-    cursor = entity.end;
-  }
-  return output + text.slice(cursor);
-}
-
-function policyFallback(entity: DetectedEntity): string {
-  if (entity.risk === "critical" || entity.risk === "high") return `[${entity.type.toUpperCase()}]`;
-  if (entity.suggestedPolicy === "keep_original") return entity.text;
-  return `[PROTECTED_${entity.type.toUpperCase()}]`;
 }
