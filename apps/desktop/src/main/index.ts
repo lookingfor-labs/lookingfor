@@ -1,7 +1,8 @@
 import { join } from "node:path";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { app, BrowserWindow, ipcMain, shell } from "electron";
-import { DemoSourceSession } from "@brainbuddy/memory-engine";
+import { SqliteSourceStore } from "@brainbuddy/memory-engine/sqlite";
 import { buildProtectionPlan, PrivacyEngine, toProtectionPreview } from "@brainbuddy/privacy-engine";
 import {
   ANALYZE_INPUT_CHANNEL,
@@ -12,6 +13,8 @@ import {
   RevealDemoSourceRequestSchema,
   SEARCH_DEMO_SOURCES_CHANNEL,
   SearchDemoSourcesRequestSchema,
+  SUBMIT_DEMO_QUERY_CHANNEL,
+  SubmitDemoQueryRequestSchema,
   SAVE_DEMO_CANDIDATE_CHANNEL
 } from "@brainbuddy/shared-contracts";
 
@@ -27,7 +30,7 @@ const privacyEngine = new PrivacyEngine({
     }
   ]
 });
-const demoSourceSession = new DemoSourceSession();
+let sourceStore: SqliteSourceStore | undefined;
 
 function createProtectionPlan(request: unknown) {
   const { text, decisions } = ProtectionRequestSchema.parse(request);
@@ -38,6 +41,32 @@ function createProtectionPlan(request: unknown) {
     decisions,
     credentialIdFactory: randomUUID
   });
+}
+
+function createSuggestedProtectionPlan(text: string) {
+  const analysis = privacyEngine.analyze(text);
+  return buildProtectionPlan({
+    text,
+    entities: analysis.entities,
+    decisions: analysis.entities.map(({ start, end, suggestedPolicy: policy }) => ({ start, end, policy })),
+    credentialIdFactory: randomUUID
+  });
+}
+
+function loadEncryptionKey(dataDirectory: string): Buffer {
+  mkdirSync(dataDirectory, { recursive: true });
+  const keyPath = join(dataDirectory, "brainbuddy.key");
+  try {
+    const key = readFileSync(keyPath);
+    if (key.byteLength !== 32) throw new Error("Stored BrainBuddy key is invalid");
+    chmodSync(keyPath, 0o600);
+    return key;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    const key = randomBytes(32);
+    writeFileSync(keyPath, key, { flag: "wx", mode: 0o600 });
+    return key;
+  }
 }
 
 function createWindow(): void {
@@ -71,6 +100,11 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
+  const dataDirectory = app.getPath("userData");
+  sourceStore = new SqliteSourceStore({
+    databasePath: join(dataDirectory, "brainbuddy.sqlite"),
+    encryptionKey: loadEncryptionKey(dataDirectory)
+  });
   ipcMain.handle(ANALYZE_INPUT_CHANNEL, (_event, request: unknown) => {
     const { text } = AnalyzeInputRequestSchema.parse(request);
     return privacyEngine.analyze(text);
@@ -79,15 +113,28 @@ app.whenReady().then(() => {
     toProtectionPreview(createProtectionPlan(request))
   );
   ipcMain.handle(SAVE_DEMO_CANDIDATE_CHANNEL, (_event, request: unknown) =>
-    demoSourceSession.save(createProtectionPlan(request), ProtectionRequestSchema.parse(request).text)
+    sourceStore!.save(createProtectionPlan(request), ProtectionRequestSchema.parse(request).text, "write")
   );
   ipcMain.handle(SEARCH_DEMO_SOURCES_CHANNEL, (_event, request: unknown) => {
     const { query } = SearchDemoSourcesRequestSchema.parse(request);
-    return demoSourceSession.search(query);
+    return sourceStore!.searchOffline(query);
+  });
+  ipcMain.handle(SUBMIT_DEMO_QUERY_CHANNEL, (_event, request: unknown) => {
+    const { text } = SubmitDemoQueryRequestSchema.parse(request);
+    const receipt = sourceStore!.save(createSuggestedProtectionPlan(text), text, "query");
+    const result = sourceStore!.searchOffline(text, receipt.sourceId);
+    const submittedCredentials = sourceStore!.searchOffline("").credentials
+      .filter((credential) => receipt.credentialIds.includes(credential.credentialId));
+    return {
+      receipt,
+      sources: result.sources,
+      credentials: [...submittedCredentials, ...result.credentials.filter((credential) =>
+        !receipt.credentialIds.includes(credential.credentialId))]
+    };
   });
   ipcMain.handle(REVEAL_DEMO_SOURCE_CHANNEL, (_event, request: unknown) => {
     const { sourceId } = RevealDemoSourceRequestSchema.parse(request);
-    return demoSourceSession.revealSource(sourceId);
+    return sourceStore!.revealSource(sourceId);
   });
   createWindow();
 
@@ -98,4 +145,9 @@ app.whenReady().then(() => {
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
+});
+
+app.on("before-quit", () => {
+  sourceStore?.close();
+  sourceStore = undefined;
 });

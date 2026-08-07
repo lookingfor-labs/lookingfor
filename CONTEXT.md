@@ -5,11 +5,11 @@ BrainBuddy preserves a user's original input while giving local search and AI a 
 ## Records
 
 **Original Input（原始输入）**:
-The complete text submitted by the user when they confirm a save.
+The complete text submitted by the user for either a write or a query.
 _Avoid_: Keystroke log, autosaved draft
 
 **Source Record（原始记录）**:
-The preserved, private record of one Original Input. It is not part of normal memory search or automatic AI context.
+The preserved, private record of one user submission, including whether it was a write or query. Its Original Input is excluded from automatic AI context.
 _Avoid_: Log, audit log, memory backup
 
 **Memory（本地记忆）**:
@@ -17,7 +17,7 @@ A mutable local file that AI can read, create, and update through controlled ope
 _Avoid_: Database memory row, protected view, source record
 
 **Credential（凭据）**:
-A value the user chose to extract from Memory and keep as a separately retrievable private record.
+A value extracted from a user submission and kept as a separately retrievable private record with links to its Source Records.
 _Avoid_: Redaction, placeholder, source record
 
 ## Identity and References
@@ -43,7 +43,7 @@ An AI-visible reference such as `[CREDENTIAL:<id>]` that identifies a Credential
 _Avoid_: Masked secret, credential value
 
 **Credential Source Link（凭据来源关系）**:
-The provenance relationship connecting a Credential to each Source Record in which it was extracted or observed.
+The provenance relationship connecting one Credential to every Source Record in which it was extracted or observed.
 _Avoid_: Credential Reference, embedded Source ID
 
 ## User Decisions

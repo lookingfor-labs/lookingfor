@@ -44,10 +44,16 @@ describe("DemoSourceSession", () => {
     expect(session.save(planWithoutCredentials, "第二条原文").sourceId).toBe("SOURCE_DEMO_002");
   });
 
-  it("rejects reusing a credential lookup id in one session", () => {
+  it("links one credential to every source where it is observed", () => {
     const session = new DemoSourceSession();
-    session.save(safePlan, "第一条原文");
-    expect(() => session.save(safePlan, "第二条原文")).toThrow("A credential id can only be saved once per session");
+    const first = session.save(safePlan, "第一条原文");
+    const second = session.save(safePlan, "第二条原文", "query");
+
+    expect(second.kind).toBe("query");
+    expect(session.searchOffline("550e8400").credentials[0]?.sourceIds).toEqual([
+      first.sourceId,
+      second.sourceId
+    ]);
   });
 
   it("rejects a plan that fails a safety check", () => {

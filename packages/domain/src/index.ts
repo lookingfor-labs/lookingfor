@@ -16,6 +16,8 @@ export type ProtectionPolicy =
   | "keep_original"
   | "move_to_vault";
 
+export type SourceSubmissionKind = "write" | "query";
+
 export interface DetectedEntity {
   readonly text: string;
   readonly start: number;
@@ -82,14 +84,16 @@ export interface ProtectionPreview {
 
 export interface DemoSaveReceipt {
   readonly sourceId: string;
+  readonly kind: SourceSubmissionKind;
   readonly credentialIds: readonly string[];
   readonly savedAt: string;
-  readonly storage: "memory_session";
+  readonly storage: "memory_session" | "sqlite";
   readonly preview: ProtectionPreview;
 }
 
 export interface DemoSourceSummary {
   readonly sourceId: string;
+  readonly kind: SourceSubmissionKind;
   readonly protectedContent: string;
   readonly credentialIds: readonly string[];
   readonly savedAt: string;
@@ -97,8 +101,26 @@ export interface DemoSourceSummary {
 
 export interface DemoSourceReveal {
   readonly sourceId: string;
+  readonly kind: SourceSubmissionKind;
   readonly originalContent: string;
   readonly savedAt: string;
+}
+
+export interface DemoCredentialSummary {
+  readonly credentialId: string;
+  readonly entityType: EntityType;
+  readonly maskedValue: string;
+  readonly sourceIds: readonly string[];
+  readonly savedAt: string;
+}
+
+export interface DemoOfflineSearchResult {
+  readonly sources: readonly DemoSourceSummary[];
+  readonly credentials: readonly DemoCredentialSummary[];
+}
+
+export interface DemoQueryResult extends DemoOfflineSearchResult {
+  readonly receipt: DemoSaveReceipt;
 }
 
 export interface MemoryFile {

@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import type {
+  DemoCredentialSummary,
+  DemoOfflineSearchResult,
+  DemoQueryResult,
   DemoSaveReceipt,
   DemoSourceSummary,
   DemoSourceReveal,
@@ -67,6 +70,7 @@ const secretTypes: ReadonlySet<EntityType> = new Set([
 ]);
 
 export function App(): JSX.Element {
+  const usesPersistentDatabase = Boolean(window.brainBuddy);
   const [activePage, setActivePage] = useState<DemoPage>("protect");
   const [text, setText] = useState<string>(scenarios[0].text);
   const [analysis, setAnalysis] = useState<PrivacyAnalysis>();
@@ -78,6 +82,8 @@ export function App(): JSX.Element {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [sources, setSources] = useState<readonly DemoSourceSummary[]>([]);
+  const [credentials, setCredentials] = useState<readonly DemoCredentialSummary[]>([]);
+  const [queryReceipt, setQueryReceipt] = useState<DemoSaveReceipt>();
   const [searchQuery, setSearchQuery] = useState("");
   const [revealedSource, setRevealedSource] = useState<DemoSourceReveal>();
   const [isLoadingRecords, setIsLoadingRecords] = useState(false);
@@ -155,9 +161,27 @@ export function App(): JSX.Element {
     setIsLoadingRecords(true);
     setError(undefined);
     try {
-      setSources(await searchDemoSources(query));
+      const result = await searchDemoSources(query);
+      setSources(result.sources);
+      setCredentials(result.credentials);
     } catch {
-      setError("读取本次会话记录失败，请重试。");
+      setError("读取本地记录失败，请重试。");
+    } finally {
+      setIsLoadingRecords(false);
+    }
+  }
+
+  async function submitQuery(): Promise<void> {
+    if (!searchQuery.trim()) return loadSources("");
+    setIsLoadingRecords(true);
+    setError(undefined);
+    try {
+      const result = await submitDemoQuery(searchQuery);
+      setQueryReceipt(result.receipt);
+      setSources(result.sources);
+      setCredentials(result.credentials);
+    } catch {
+      setError("查询提交失败，未生成 Source 记录。");
     } finally {
       setIsLoadingRecords(false);
     }
@@ -187,10 +211,10 @@ export function App(): JSX.Element {
           {demoNavigation.map((item) => <button key={item.id} type="button" className={activePage === item.id ? "active" : ""} onClick={() => navigate(item.id)}>
             <span className={`demo-state ${item.status}`} aria-hidden="true" />
             <small>{item.number}</small><strong>{item.label}</strong>
-            <em>{item.status === "ready" ? "可验收" : item.status === "next" ? "会话原型" : "界面预览"}</em>
+            <em>{item.status === "ready" ? "可验收" : item.status === "next" ? "本地数据库" : "界面预览"}</em>
           </button>)}
         </nav>
-        <div className="sidebar-foot"><span><i /> 本地运行</span><span>AI 请求 0</span><small>当前数据仅保存在进程内存</small></div>
+        <div className="sidebar-foot"><span><i /> 本地运行</span><span>AI 请求 0</span><small>{usesPersistentDatabase ? "Source 与凭据已保存到本地 SQLite" : "浏览器验收模式使用会话内存"}</small></div>
       </aside>
 
       <main className="shell">
@@ -202,7 +226,7 @@ export function App(): JSX.Element {
       {activePage === "protect" && <>
       <section className="hero compact-hero">
         <div><p className="section-number">第一阶段 · 下一步</p><h2>看清三份内容，<br />再决定是否保存。</h2></div>
-        <p className="hero-copy">这一步把检测建议变成可调整的保护方案。保存只进入本次 Demo 的进程内存，应用退出后清空，不会调用外部 AI。</p>
+        <p className="hero-copy">这一步把检测建议变成可调整的保护方案。{usesPersistentDatabase ? "确认后加密保存到本地 SQLite，离线仍可查询。" : "浏览器验收模式仅保存到会话内存。"}不会调用外部 AI。</p>
       </section>
 
       <nav className="scenario-bar" aria-label="验收场景">
@@ -267,16 +291,16 @@ export function App(): JSX.Element {
           </div>
         </div>
         <div className="save-action">
-          <button type="button" disabled={!preview?.readyToSave || isSaving || isAnalyzing || Boolean(receipt)} onClick={() => void saveCandidate()}>{receipt ? "本次版本已保存" : isSaving ? "正在保存…" : "保存到本次 Demo 会话"}</button>
-          <small>仅内存保存 · 应用退出后清空</small>
+          <button type="button" disabled={!preview?.readyToSave || isSaving || isAnalyzing || Boolean(receipt)} onClick={() => void saveCandidate()}>{receipt ? "本次版本已保存" : isSaving ? "正在保存…" : usesPersistentDatabase ? "保存到本地数据库" : "保存到浏览器会话"}</button>
+          <small>{usesPersistentDatabase ? "本地加密 SQLite · 离线可查询" : "浏览器会话内存 · 刷新后清空"}</small>
         </div>
       </section>
 
       {receipt && <section className="receipt" role="status"><div><span>已保存原始记录</span><strong>{receipt.sourceId}</strong></div><p>凭据记录：{receipt.credentialIds.length ? receipt.credentialIds.join("、") : "无"}</p><button type="button" onClick={() => navigate("save")}>查看保存与来源</button></section>}
       </>}
 
-      {activePage === "save" && <SavePage sources={sources} receipt={receipt} isLoading={isLoadingRecords} revealedSource={revealedSource} onReveal={revealSource} onCloseReveal={() => setRevealedSource(undefined)} onGoProtect={() => navigate("protect")} />}
-      {activePage === "search" && <SearchPage query={searchQuery} sources={sources} isLoading={isLoadingRecords} revealedSource={revealedSource} onQueryChange={setSearchQuery} onSearch={() => void loadSources(searchQuery)} onReveal={revealSource} onCloseReveal={() => setRevealedSource(undefined)} />}
+      {activePage === "save" && <SavePage sources={sources} receipt={receipt} isPersistent={usesPersistentDatabase} isLoading={isLoadingRecords} revealedSource={revealedSource} onReveal={revealSource} onCloseReveal={() => setRevealedSource(undefined)} onGoProtect={() => navigate("protect")} />}
+      {activePage === "search" && <SearchPage query={searchQuery} sources={sources} credentials={credentials} queryReceipt={queryReceipt} isLoading={isLoadingRecords} revealedSource={revealedSource} onQueryChange={setSearchQuery} onSearch={() => void submitQuery()} onReveal={revealSource} onCloseReveal={() => setRevealedSource(undefined)} />}
       {activePage === "ai" && <AiPreviewPage />}
       {activePage === "agent" && <AgentPreviewPage />}
       {activePage !== "protect" && error && <p className="error" role="alert">{error}</p>}
@@ -285,9 +309,10 @@ export function App(): JSX.Element {
   );
 }
 
-function SavePage({ sources, receipt, isLoading, revealedSource, onReveal, onCloseReveal, onGoProtect }: {
+function SavePage({ sources, receipt, isPersistent, isLoading, revealedSource, onReveal, onCloseReveal, onGoProtect }: {
   readonly sources: readonly DemoSourceSummary[];
   readonly receipt: DemoSaveReceipt | undefined;
+  readonly isPersistent: boolean;
   readonly isLoading: boolean;
   readonly revealedSource: DemoSourceReveal | undefined;
   readonly onReveal: (sourceId: string) => Promise<void>;
@@ -295,19 +320,21 @@ function SavePage({ sources, receipt, isLoading, revealedSource, onReveal, onClo
   readonly onGoProtect: () => void;
 }): JSX.Element {
   return <>
-    <PageIntro number="02" kicker="SESSION STORAGE PROTOTYPE" title="保存与来源" copy="验证 Source、凭据与原始输入之间的引用关系。Memory 不在保存输入时自动生成，而由 AI 独立维护为本地文件。" />
-    <div className="prototype-notice"><strong>会话原型</strong><span>现在验证数据模型与手动读取流程；应用退出后记录会清空。</span></div>
+    <PageIntro number="02" kicker="LOCAL DATABASE" title="保存与来源" copy="验证 Source、凭据与原始输入之间的引用关系。Memory 不在保存输入时自动生成，而由 AI 独立维护为本地文件。" />
+    <div className="prototype-notice"><strong>{isPersistent ? "SQLite 已启用" : "浏览器验收模式"}</strong><span>{isPersistent ? "原文和凭据明文加密落盘；索引只包含受保护内容、掩码与引用。" : "当前浏览器预览使用会话内存，桌面运行时会写入 SQLite。"}</span></div>
     {sources.length === 0 && !isLoading ? <EmptyPage title="还没有保存记录" copy="先到“输入与保护”完成一次保存，系统会生成 Source ID 和关联的凭据引用。" action="去输入与保护" onAction={onGoProtect} /> : <section className="record-stack">
-      <div className="results-heading"><div><p className="section-number">本次会话</p><h3>已保存 Source</h3></div><span>{isLoading ? "正在读取" : `${sources.length} 条`}</span></div>
+      <div className="results-heading"><div><p className="section-number">离线记录</p><h3>已保存 Source</h3></div><span>{isLoading ? "正在读取" : `${sources.length} 条`}</span></div>
       {sources.map((source) => <SourceRecord key={source.sourceId} source={source} onReveal={onReveal} highlighted={receipt?.sourceId === source.sourceId} />)}
     </section>}
     {revealedSource && <SourceReveal source={revealedSource} onClose={onCloseReveal} />}
   </>;
 }
 
-function SearchPage({ query, sources, isLoading, revealedSource, onQueryChange, onSearch, onReveal, onCloseReveal }: {
+function SearchPage({ query, sources, credentials, queryReceipt, isLoading, revealedSource, onQueryChange, onSearch, onReveal, onCloseReveal }: {
   readonly query: string;
   readonly sources: readonly DemoSourceSummary[];
+  readonly credentials: readonly DemoCredentialSummary[];
+  readonly queryReceipt: DemoSaveReceipt | undefined;
   readonly isLoading: boolean;
   readonly revealedSource: DemoSourceReveal | undefined;
   readonly onQueryChange: (value: string) => void;
@@ -316,16 +343,22 @@ function SearchPage({ query, sources, isLoading, revealedSource, onQueryChange, 
   readonly onCloseReveal: () => void;
 }): JSX.Element {
   return <>
-    <PageIntro number="03" kicker="LOCAL SEARCH · OFFLINE" title="本地查询" copy="当前原型只搜索 Source 的受保护内容、Source ID 和凭据引用。原始输入必须手动打开；Memory 文件查询将在后续接入。" />
+    <PageIntro number="03" kicker="LOCAL SEARCH · OFFLINE" title="本地查询" copy="每次点击查询都会先保存一条 query Source，再离线搜索 Source 与凭据记录。原始输入仍须手动打开。" />
     <form className="search-box panel" onSubmit={(event) => { event.preventDefault(); onSearch(); }}>
       <input aria-label="本地查询关键词" value={query} onChange={(event) => onQueryChange(event.target.value)} placeholder="输入 Figma、SOURCE_DEMO_001 或凭据 UUID" />
       <button type="submit">{isLoading ? "查询中…" : "离线查询"}</button>
       <small>未连接 AI · 原始记录不参与索引</small>
     </form>
+    {queryReceipt && <div className="prototype-notice"><strong>查询已留档</strong><span>{queryReceipt.sourceId} · {queryReceipt.credentialIds.length} 个凭据关联</span></div>}
     <section className="record-stack search-results">
-      <div className="results-heading"><div><p className="section-number">查询结果</p><h3>{query ? `“${query}”` : "全部 Source"}</h3></div><span>{sources.length} 条</span></div>
+      <div className="results-heading"><div><p className="section-number">Source 结果</p><h3>{query ? `“${query}”` : "全部 Source"}</h3></div><span>{sources.length} 条</span></div>
       {sources.map((source) => <SourceRecord key={source.sourceId} source={source} onReveal={onReveal} />)}
       {!isLoading && sources.length === 0 && <div className="empty">没有匹配的 Source。先保存一条记录，或换一个关键词。</div>}
+    </section>
+    <section className="record-stack search-results">
+      <div className="results-heading"><div><p className="section-number">Credential 结果</p><h3>凭据记录</h3></div><span>{credentials.length} 条</span></div>
+      {credentials.map((credential) => <CredentialRecord key={credential.credentialId} credential={credential} />)}
+      {!isLoading && credentials.length === 0 && <div className="empty">没有匹配的凭据记录。</div>}
     </section>
     {revealedSource && <SourceReveal source={revealedSource} onClose={onCloseReveal} />}
   </>;
@@ -358,9 +391,17 @@ function PageIntro({ number, kicker, title, copy }: { readonly number: string; r
 
 function SourceRecord({ source, onReveal, highlighted = false }: { readonly source: DemoSourceSummary; readonly onReveal: (sourceId: string) => Promise<void>; readonly highlighted?: boolean }): JSX.Element {
   return <article className={`memory-record panel ${highlighted ? "highlighted" : ""}`}>
-    <div className="record-meta"><strong>{source.sourceId}</strong><span>{new Date(source.savedAt).toLocaleString("zh-CN")}</span></div>
+    <div className="record-meta"><strong>{source.sourceId}</strong><span>{source.kind === "write" ? "写入" : "查询"} · {new Date(source.savedAt).toLocaleString("zh-CN")}</span></div>
     <p>{source.protectedContent}</p>
     <div className="record-links"><code>[SOURCE:{source.sourceId}]</code><span>{source.credentialIds.length} 个凭据引用</span><button type="button" onClick={() => void onReveal(source.sourceId)}>手动查看原始记录</button></div>
+  </article>;
+}
+
+function CredentialRecord({ credential }: { readonly credential: DemoCredentialSummary }): JSX.Element {
+  return <article className="memory-record panel">
+    <div className="record-meta"><strong>{credential.credentialId}</strong><span>{typeLabels[credential.entityType]}</span></div>
+    <p>{credential.maskedValue}</p>
+    <div className="record-links"><span>关联 Source</span>{credential.sourceIds.map((sourceId) => <code key={sourceId}>[SOURCE:{sourceId}]</code>)}</div>
   </article>;
 }
 
@@ -450,9 +491,31 @@ async function saveDemoCandidate(request: ProtectionRequest): Promise<DemoSaveRe
   return runtime.session.save(plan, request.text);
 }
 
-async function searchDemoSources(query: string): Promise<readonly DemoSourceSummary[]> {
+async function searchDemoSources(query: string): Promise<DemoOfflineSearchResult> {
   if (window.brainBuddy) return window.brainBuddy.searchDemoSources({ query });
-  return (await browserRuntime()).session.search(query);
+  return (await browserRuntime()).session.searchOffline(query);
+}
+
+async function submitDemoQuery(text: string): Promise<DemoQueryResult> {
+  if (window.brainBuddy) return window.brainBuddy.submitDemoQuery({ text });
+  const runtime = await browserRuntime();
+  const analysis = runtime.engine.analyze(text);
+  const plan = runtime.buildProtectionPlan({
+    text,
+    entities: analysis.entities,
+    decisions: analysis.entities.map(({ start, end, suggestedPolicy: policy }) => ({ start, end, policy })),
+    credentialIdFactory: () => runtime.createCredentialId(crypto)
+  });
+  const receipt = runtime.session.save(plan, text, "query");
+  const result = runtime.session.searchOffline(text, receipt.sourceId);
+  const submittedCredentials = runtime.session.searchOffline("").credentials
+    .filter((credential) => receipt.credentialIds.includes(credential.credentialId));
+  return {
+    receipt,
+    sources: result.sources,
+    credentials: [...submittedCredentials, ...result.credentials.filter((credential) =>
+      !receipt.credentialIds.includes(credential.credentialId))]
+  };
 }
 
 async function revealDemoSource(sourceId: string): Promise<DemoSourceReveal> {

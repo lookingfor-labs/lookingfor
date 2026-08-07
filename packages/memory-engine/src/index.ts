@@ -1,9 +1,12 @@
 import type {
   CredentialDraft,
+  DemoCredentialSummary,
+  DemoOfflineSearchResult,
   DemoSourceSummary,
   DemoSaveReceipt,
   DemoSourceReveal,
-  ProtectionPlan
+  ProtectionPlan,
+  SourceSubmissionKind
 } from "@brainbuddy/domain";
 import { toProtectionPreview } from "@brainbuddy/privacy-engine";
 
@@ -14,7 +17,7 @@ export interface DemoSourceSessionOptions {
 export class DemoSourceSession {
   readonly #now: () => Date;
   #sequence = 0;
-  readonly #credentials = new Map<string, CredentialDraft>();
+  readonly #credentials = new Map<string, { readonly draft: CredentialDraft; readonly sourceIds: string[]; readonly savedAt: string }>();
   readonly #summaries = new Map<string, DemoSourceSummary>();
   readonly #sources = new Map<string, DemoSourceReveal>();
 
@@ -22,31 +25,50 @@ export class DemoSourceSession {
     this.#now = options.now ?? (() => new Date());
   }
 
-  save(plan: ProtectionPlan, originalContent: string): DemoSaveReceipt {
+  save(plan: ProtectionPlan, originalContent: string, kind: SourceSubmissionKind = "write"): DemoSaveReceipt {
     const initialPreview = toProtectionPreview(plan);
     if (!initialPreview.readyToSave) {
       throw new Error("Protection checks must pass before saving");
     }
-    if (plan.credentialDrafts.some((credential) => this.#credentials.has(credential.credentialId))) {
-      throw new Error("A credential id can only be saved once per session");
+    if (plan.credentialDrafts.some((credential) => {
+      const existing = this.#credentials.get(credential.credentialId);
+      return existing && existing.draft.secret !== credential.secret;
+    })) {
+      throw new Error("A credential id cannot identify different secrets");
     }
 
     this.#sequence += 1;
     const suffix = String(this.#sequence).padStart(3, "0");
     const sourceId = `SOURCE_DEMO_${suffix}`;
     const savedAt = this.#now().toISOString();
+    const resolvedCredentials = plan.credentialDrafts.map((credential) => {
+      const existing = [...this.#credentials.values()].find(({ draft }) => draft.secret === credential.secret);
+      return existing
+        ? { ...credential, credentialId: existing.draft.credentialId, ref: existing.draft.ref }
+        : credential;
+    });
+    const protectedContent = plan.credentialDrafts.reduce((content, credential, index) => {
+      const resolved = resolvedCredentials[index];
+      return resolved ? content.replaceAll(credential.ref, resolved.ref) : content;
+    }, plan.protectedContent);
     const storedPlan = {
       ...plan,
-      protectedContent: `${plan.protectedContent}\n\n来源：[SOURCE:${sourceId}]`
+      protectedContent: `${protectedContent}\n\n来源：[SOURCE:${sourceId}]`,
+      credentialDrafts: resolvedCredentials
     };
     const preview = toProtectionPreview(storedPlan);
-    const credentialIds = plan.credentialDrafts.map((credential) => credential.credentialId);
-    plan.credentialDrafts.forEach((credential) => this.#credentials.set(credential.credentialId, credential));
-    this.#sources.set(sourceId, { sourceId, originalContent, savedAt });
-    this.#summaries.set(sourceId, { sourceId, protectedContent: storedPlan.protectedContent, credentialIds, savedAt });
+    const credentialIds = resolvedCredentials.map((credential) => credential.credentialId);
+    resolvedCredentials.forEach((credential) => {
+      const existing = this.#credentials.get(credential.credentialId);
+      if (existing) existing.sourceIds.push(sourceId);
+      else this.#credentials.set(credential.credentialId, { draft: credential, sourceIds: [sourceId], savedAt });
+    });
+    this.#sources.set(sourceId, { sourceId, kind, originalContent, savedAt });
+    this.#summaries.set(sourceId, { sourceId, kind, protectedContent: storedPlan.protectedContent, credentialIds, savedAt });
 
     return {
       sourceId,
+      kind,
       credentialIds,
       savedAt,
       storage: "memory_session",
@@ -55,11 +77,30 @@ export class DemoSourceSession {
   }
 
   search(query: string): readonly DemoSourceSummary[] {
+    return this.searchOffline(query).sources;
+  }
+
+  searchOffline(query: string, excludeSourceId?: string): DemoOfflineSearchResult {
     const normalized = query.trim().toLocaleLowerCase();
-    return [...this.#summaries.values()].filter((summary) =>
-      !normalized || [summary.sourceId, summary.protectedContent, ...summary.credentialIds]
+    const sources = [...this.#summaries.values()].filter((summary) =>
+      summary.sourceId !== excludeSourceId && (!normalized || [summary.sourceId, summary.kind, summary.protectedContent, ...summary.credentialIds]
         .some((value) => value.toLocaleLowerCase().includes(normalized))
+      )
     );
+    const matchingSourceIds = new Set(sources.map((source) => source.sourceId));
+    const credentials: DemoCredentialSummary[] = [...this.#credentials.values()]
+      .filter(({ draft, sourceIds }) => !normalized
+        || [draft.credentialId, draft.entityType, draft.maskedValue]
+          .some((value) => value.toLocaleLowerCase().includes(normalized))
+        || sourceIds.some((sourceId) => matchingSourceIds.has(sourceId)))
+      .map(({ draft, sourceIds, savedAt }) => ({
+        credentialId: draft.credentialId,
+        entityType: draft.entityType,
+        maskedValue: draft.maskedValue,
+        sourceIds: [...sourceIds],
+        savedAt
+      }));
+    return { sources, credentials };
   }
 
   revealSource(sourceId: string): DemoSourceReveal {

@@ -1,7 +1,8 @@
 import { z } from "zod";
 import type {
   DemoSaveReceipt,
-  DemoSourceSummary,
+  DemoOfflineSearchResult,
+  DemoQueryResult,
   DemoSourceReveal,
   PrivacyAnalysis,
   ProtectionPreview
@@ -11,6 +12,7 @@ export const ANALYZE_INPUT_CHANNEL = "privacy:analyze-input";
 export const PREVIEW_PROTECTION_CHANNEL = "privacy:preview-protection";
 export const SAVE_DEMO_CANDIDATE_CHANNEL = "memory:save-demo-candidate";
 export const SEARCH_DEMO_SOURCES_CHANNEL = "source:search-demo-sources";
+export const SUBMIT_DEMO_QUERY_CHANNEL = "source:submit-demo-query";
 export const REVEAL_DEMO_SOURCE_CHANNEL = "memory:reveal-demo-source";
 
 export const AnalyzeInputRequestSchema = z.object({
@@ -35,17 +37,23 @@ export const SearchDemoSourcesRequestSchema = z.object({
   query: z.string().max(2_000)
 });
 
+export const SubmitDemoQueryRequestSchema = z.object({
+  text: z.string().trim().min(1).max(2_000)
+});
+
 export const RevealDemoSourceRequestSchema = z.object({
-  sourceId: z.string().regex(/^SOURCE_DEMO_\d{3,}$/u)
+  sourceId: z.string().regex(/^SOURCE_(?:DEMO_\d{3,}|[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/iu)
 });
 
 export type SearchDemoSourcesRequest = z.infer<typeof SearchDemoSourcesRequestSchema>;
+export type SubmitDemoQueryRequest = z.infer<typeof SubmitDemoQueryRequestSchema>;
 export type RevealDemoSourceRequest = z.infer<typeof RevealDemoSourceRequestSchema>;
 
 export interface BrainBuddyApi {
   analyzeInput(request: AnalyzeInputRequest): Promise<PrivacyAnalysis>;
   previewProtection(request: ProtectionRequest): Promise<ProtectionPreview>;
   saveDemoCandidate(request: ProtectionRequest): Promise<DemoSaveReceipt>;
-  searchDemoSources(request: SearchDemoSourcesRequest): Promise<readonly DemoSourceSummary[]>;
+  searchDemoSources(request: SearchDemoSourcesRequest): Promise<DemoOfflineSearchResult>;
+  submitDemoQuery(request: SubmitDemoQueryRequest): Promise<DemoQueryResult>;
   revealDemoSource(request: RevealDemoSourceRequest): Promise<DemoSourceReveal>;
 }
