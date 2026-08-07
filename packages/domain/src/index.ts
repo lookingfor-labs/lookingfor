@@ -14,8 +14,6 @@ export type RiskLevel = "low" | "medium" | "high" | "critical";
 
 export type ProtectionPolicy =
   | "keep_original"
-  | "replace_with_token"
-  | "original_only"
   | "move_to_vault";
 
 export interface DetectedEntity {
@@ -41,10 +39,14 @@ export interface ProtectionDecision {
   readonly start: number;
   readonly end: number;
   readonly policy: ProtectionPolicy;
+  readonly credentialId?: string | undefined;
 }
 
 export interface CredentialDraft {
+  readonly credentialId: string;
   readonly ref: string;
+  readonly start: number;
+  readonly end: number;
   readonly entityType: EntityType;
   readonly secret: string;
   readonly maskedValue: string;
@@ -65,7 +67,10 @@ export interface ProtectionPlan {
 }
 
 export interface CredentialPreview {
+  readonly credentialId: string;
   readonly ref: string;
+  readonly start: number;
+  readonly end: number;
   readonly entityType: EntityType;
   readonly maskedValue: string;
 }

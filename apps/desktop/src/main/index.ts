@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 import { app, BrowserWindow, ipcMain, shell } from "electron";
 import { DemoMemorySession } from "@brainbuddy/memory-engine";
 import { buildProtectionPlan, PrivacyEngine, toProtectionPreview } from "@brainbuddy/privacy-engine";
@@ -18,7 +19,7 @@ const privacyEngine = new PrivacyEngine({
       entityType: "person",
       token: "[PERSON_A]",
       aliases: [],
-      defaultPolicy: "replace_with_token"
+      defaultPolicy: "keep_original"
     }
   ]
 });
@@ -27,7 +28,12 @@ const demoMemorySession = new DemoMemorySession();
 function createProtectionPlan(request: unknown) {
   const { text, decisions } = ProtectionRequestSchema.parse(request);
   const analysis = privacyEngine.analyze(text);
-  return buildProtectionPlan({ text, entities: analysis.entities, decisions });
+  return buildProtectionPlan({
+    text,
+    entities: analysis.entities,
+    decisions,
+    credentialIdFactory: randomUUID
+  });
 }
 
 function createWindow(): void {

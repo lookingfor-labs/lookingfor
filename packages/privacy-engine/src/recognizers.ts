@@ -16,7 +16,7 @@ export class EmailRecognizer implements Recognizer {
         type: "email",
         risk: "high",
         reason: ["符合邮箱地址格式"],
-        suggestedPolicy: "original_only",
+        suggestedPolicy: "keep_original",
         recognizerId: this.id
       })
     );
@@ -200,7 +200,7 @@ export class HighEntropySecretRecognizer implements Recognizer {
           type: "high_entropy_secret",
           risk: "high",
           reason: ["字符串较长且字符分布复杂", "同时包含多类字符"],
-          suggestedPolicy: "original_only",
+          suggestedPolicy: "move_to_vault",
           recognizerId: this.id,
           replacementToken: "[POTENTIAL_SECRET]"
         };

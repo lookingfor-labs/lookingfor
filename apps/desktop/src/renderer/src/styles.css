@@ -57,7 +57,6 @@ h1 { margin: 0; font: 600 20px/1 Georgia, "Songti SC", serif; }
 .entity-reason p, .entity-policy p { margin: 5px 0 0; color: #4d4a43; font-size: 12px; line-height: 1.45; }
 .entity-policy { display: block; border-left: 1px solid #ddd9d0; padding-left: 18px; }
 .entity-policy select { display: block; width: 100%; margin-top: 5px; border: 0; border-bottom: 1px solid #aaa69d; outline: 0; background: transparent; padding: 4px 18px 4px 0; color: #393731; font-size: 12px; }
-.entity-policy em { display: block; margin-top: 5px; color: #984a3a; font-size: 9px; font-style: normal; }
 .empty { padding: 38px; border: 1px dashed #cbc7bc; color: #7a766e; text-align: center; font-size: 13px; }
 .preview { margin-top: 18px; }
 .preview > p { min-height: 72px; margin: 0; padding: 20px; font: 15px/1.75 Georgia, "Songti SC", serif; white-space: pre-wrap; }

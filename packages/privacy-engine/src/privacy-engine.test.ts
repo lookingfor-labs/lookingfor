@@ -87,7 +87,7 @@ describe("first recognizers", () => {
       entityType: "person",
       token: "[PERSON_A]",
       aliases: ["老张"],
-      defaultPolicy: "replace_with_token"
+      defaultPolicy: "keep_original"
     };
     const entities = new KnownEntityRecognizer([mapping]).recognize("张伟和老张是同一个人");
     expect(entities).toHaveLength(2);
@@ -123,6 +123,7 @@ describe("PrivacyEngine", () => {
 });
 
 describe("buildProtectionPlan", () => {
+  const credentialId = "550e8400-e29b-41d4-a716-446655440000";
   const input = "张伟的账号 demo@example.com，key 是 sk-demoExample1234567890";
   const engine = new PrivacyEngine({
     knownEntities: [{
@@ -131,7 +132,7 @@ describe("buildProtectionPlan", () => {
       entityType: "person",
       token: "[PERSON_A]",
       aliases: [],
-      defaultPolicy: "replace_with_token"
+      defaultPolicy: "keep_original"
     }]
   });
 
@@ -142,17 +143,23 @@ describe("buildProtectionPlan", () => {
       end: entity.end,
       policy: entity.suggestedPolicy
     }));
-    const plan = buildProtectionPlan({ text: input, entities, decisions });
+    const plan = buildProtectionPlan({
+      text: input,
+      entities,
+      decisions,
+      credentialIdFactory: () => credentialId
+    });
 
     expect(plan.memoryContent).toBe(
-      "[PERSON_A]的账号 demo@example.com，key 是 [CREDENTIAL_API_KEY]"
+      "张伟的账号 demo@example.com，key 是 [CREDENTIAL:550e8400-e29b-41d4-a716-446655440000]"
     );
     expect(plan.protectedContent).toBe(
-      "[PERSON_A]的账号 [EMAIL]，key 是 [CREDENTIAL_API_KEY]"
+      "[PERSON_A]的账号 [EMAIL]，key 是 [CREDENTIAL:550e8400-e29b-41d4-a716-446655440000]"
     );
     expect(plan.credentialDrafts).toEqual([
       expect.objectContaining({
-        ref: "[CREDENTIAL_API_KEY]",
+        credentialId,
+        ref: "[CREDENTIAL:550e8400-e29b-41d4-a716-446655440000]",
         entityType: "api_key",
         secret: "sk-demoExample1234567890"
       })
@@ -160,13 +167,14 @@ describe("buildProtectionPlan", () => {
     expect(plan.safetyChecks.every((check) => check.passed)).toBe(true);
   });
 
-  it("never exposes high-risk values to the protected view even when keep-original is selected", () => {
+  it("automatically protects high-risk values even when their storage policy keeps the original", () => {
     const analysis = new PrivacyEngine().analyze("账号 demo@example.com");
     const entity = analysis.entities[0]!;
     const plan = buildProtectionPlan({
       text: "账号 demo@example.com",
       entities: analysis.entities,
-      decisions: [{ start: entity.start, end: entity.end, policy: "keep_original" }]
+      decisions: [{ start: entity.start, end: entity.end, policy: "keep_original" }],
+      credentialIdFactory: () => credentialId
     });
 
     expect(plan.memoryContent).toBe("账号 demo@example.com");
@@ -177,7 +185,7 @@ describe("buildProtectionPlan", () => {
 
   it("rejects incomplete decisions instead of silently using defaults", () => {
     const entities = engine.analyze(input).entities;
-    expect(() => buildProtectionPlan({ text: input, entities, decisions: [] })).toThrow(
+    expect(() => buildProtectionPlan({ text: input, entities, decisions: [], credentialIdFactory: () => credentialId })).toThrow(
       "Every detected entity requires one protection decision"
     );
   });
@@ -187,7 +195,26 @@ describe("buildProtectionPlan", () => {
     expect(() => buildProtectionPlan({
       text: "张伟",
       entities: [entity],
-      decisions: [{ start: entity.start, end: entity.end, policy: "move_to_vault" }]
+      decisions: [{ start: entity.start, end: entity.end, policy: "move_to_vault" }],
+      credentialIdFactory: () => credentialId
     })).toThrow("Only credential entities can move to the vault");
+  });
+
+  it("reuses a confirmed credential id so preview and persistence share one lookup key", () => {
+    const entity = engine.analyze(input).entities.find((candidate) => candidate.type === "api_key")!;
+    const plan = buildProtectionPlan({
+      text: input,
+      entities: [entity],
+      decisions: [{
+        start: entity.start,
+        end: entity.end,
+        policy: "move_to_vault",
+        credentialId
+      }],
+      credentialIdFactory: () => { throw new Error("should not allocate another id"); }
+    });
+
+    expect(plan.credentialDrafts[0]?.credentialId).toBe(credentialId);
+    expect(plan.protectedContent).toContain(`[CREDENTIAL:${credentialId}]`);
   });
 });

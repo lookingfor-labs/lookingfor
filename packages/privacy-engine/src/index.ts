@@ -62,7 +62,7 @@ export function buildProtectedPreview(text: string, entities: readonly DetectedE
 }
 
 function policyFallback(entity: DetectedEntity): string {
+  if (entity.risk === "critical" || entity.risk === "high") return `[${entity.type.toUpperCase()}]`;
   if (entity.suggestedPolicy === "keep_original") return entity.text;
-  if (entity.suggestedPolicy === "original_only") return `[${entity.type.toUpperCase()}]`;
   return `[PROTECTED_${entity.type.toUpperCase()}]`;
 }

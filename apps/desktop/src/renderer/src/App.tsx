@@ -40,8 +40,6 @@ const typeLabels: Readonly<Record<EntityType, string>> = {
 
 const policyLabels: Readonly<Record<ProtectionPolicy, string>> = {
   keep_original: "保留原文",
-  replace_with_token: "替换标记",
-  original_only: "仅本地原文",
   move_to_vault: "抽离为凭据"
 };
 
@@ -60,6 +58,7 @@ export function App(): JSX.Element {
   const [text, setText] = useState<string>(scenarios[0].text);
   const [analysis, setAnalysis] = useState<PrivacyAnalysis>();
   const [decisions, setDecisions] = useState<Record<string, ProtectionPolicy>>({});
+  const [credentialIds, setCredentialIds] = useState<Record<string, string>>({});
   const [preview, setPreview] = useState<ProtectionPreview>();
   const [receipt, setReceipt] = useState<DemoSaveReceipt>();
   const [error, setError] = useState<string>();
@@ -74,6 +73,7 @@ export function App(): JSX.Element {
         setAnalysis(undefined);
         setPreview(undefined);
         setDecisions({});
+        setCredentialIds({});
         return;
       }
       void analyzeAndPreview(text, sequence);
@@ -90,10 +90,11 @@ export function App(): JSX.Element {
       const nextDecisions = Object.fromEntries(
         nextAnalysis.entities.map((entity) => [entityKey(entity), entity.suggestedPolicy])
       );
-      const nextPreview = await previewProtection(toRequest(value, nextAnalysis, nextDecisions));
+      const nextPreview = await previewProtection(toRequest(value, nextAnalysis, nextDecisions, {}));
       if (requestSequence.current !== sequence) return;
       setAnalysis(nextAnalysis);
       setDecisions(nextDecisions);
+      setCredentialIds(credentialIdsFrom(nextPreview));
       setPreview(nextPreview);
     } catch {
       if (requestSequence.current === sequence) setError("本地保护规划失败，请检查输入后重试。");
@@ -109,7 +110,9 @@ export function App(): JSX.Element {
     setReceipt(undefined);
     setError(undefined);
     try {
-      setPreview(await previewProtection(toRequest(text, analysis, nextDecisions)));
+      const nextPreview = await previewProtection(toRequest(text, analysis, nextDecisions, credentialIds));
+      setPreview(nextPreview);
+      setCredentialIds((current) => ({ ...current, ...credentialIdsFrom(nextPreview) }));
     } catch {
       setError("无法应用这项保护策略，请重新选择。");
     }
@@ -120,7 +123,7 @@ export function App(): JSX.Element {
     setIsSaving(true);
     setError(undefined);
     try {
-      setReceipt(await saveDemoCandidate(toRequest(text, analysis, decisions)));
+      setReceipt(await saveDemoCandidate(toRequest(text, analysis, decisions, credentialIds)));
     } catch {
       setError("保存失败：保护检查未通过，内容没有写入会话。");
     } finally {
@@ -202,7 +205,7 @@ export function App(): JSX.Element {
           </div>
         </div>
         <div className="save-action">
-          <button type="button" disabled={!preview?.readyToSave || isSaving || isAnalyzing} onClick={() => void saveCandidate()}>{isSaving ? "正在保存…" : "保存到本次 Demo 会话"}</button>
+          <button type="button" disabled={!preview?.readyToSave || isSaving || isAnalyzing || Boolean(receipt)} onClick={() => void saveCandidate()}>{receipt ? "本次版本已保存" : isSaving ? "正在保存…" : "保存到本次 Demo 会话"}</button>
           <small>仅内存保存 · 应用退出后清空</small>
         </div>
       </section>
@@ -223,10 +226,8 @@ function EntityCard({ entity, policy, onChange }: {
     <div className="entity-reason"><small>识别原因</small><p>{entity.reason.join(" · ")}</p></div>
     <label className="entity-policy"><small>当前策略</small><select value={policy} onChange={(event) => void onChange(entity, event.target.value as ProtectionPolicy)}>
       <option value="keep_original">{policyLabels.keep_original}</option>
-      <option value="replace_with_token">{policyLabels.replace_with_token}</option>
-      <option value="original_only">{policyLabels.original_only}</option>
       {credentialTypes.has(entity.type) && <option value="move_to_vault">{policyLabels.move_to_vault}</option>}
-    </select>{(entity.risk === "critical" || entity.risk === "high") && policy === "keep_original" && <em>AI 视图仍会强制替换</em>}</label>
+    </select></label>
   </article>;
 }
 
@@ -238,8 +239,28 @@ function entityKey(entity: Pick<DetectedEntity, "start" | "end">): string {
   return `${entity.start}:${entity.end}`;
 }
 
-function toRequest(text: string, analysis: PrivacyAnalysis, decisions: Record<string, ProtectionPolicy>): ProtectionRequest {
-  return { text, decisions: analysis.entities.map((entity) => ({ start: entity.start, end: entity.end, policy: decisions[entityKey(entity)] ?? entity.suggestedPolicy })) };
+function toRequest(
+  text: string,
+  analysis: PrivacyAnalysis,
+  decisions: Record<string, ProtectionPolicy>,
+  credentialIds: Record<string, string>
+): ProtectionRequest {
+  return { text, decisions: analysis.entities.map((entity) => {
+    const credentialId = credentialIds[entityKey(entity)];
+    return {
+      start: entity.start,
+      end: entity.end,
+      policy: decisions[entityKey(entity)] ?? entity.suggestedPolicy,
+      ...(credentialId ? { credentialId } : {})
+    };
+  }) };
+}
+
+function credentialIdsFrom(preview: ProtectionPreview): Record<string, string> {
+  return Object.fromEntries(preview.credentials.map((credential) => [
+    `${credential.start}:${credential.end}`,
+    credential.credentialId
+  ]));
 }
 
 async function analyzeInput(text: string): Promise<PrivacyAnalysis> {
@@ -251,14 +272,24 @@ async function previewProtection(request: ProtectionRequest): Promise<Protection
   if (window.brainBuddy) return window.brainBuddy.previewProtection(request);
   const runtime = await browserRuntime();
   const analysis = runtime.engine.analyze(request.text);
-  return runtime.toProtectionPreview(runtime.buildProtectionPlan({ text: request.text, entities: analysis.entities, decisions: request.decisions }));
+  return runtime.toProtectionPreview(runtime.buildProtectionPlan({
+    text: request.text,
+    entities: analysis.entities,
+    decisions: request.decisions,
+    credentialIdFactory: () => crypto.randomUUID()
+  }));
 }
 
 async function saveDemoCandidate(request: ProtectionRequest): Promise<DemoSaveReceipt> {
   if (window.brainBuddy) return window.brainBuddy.saveDemoCandidate(request);
   const runtime = await browserRuntime();
   const analysis = runtime.engine.analyze(request.text);
-  const plan = runtime.buildProtectionPlan({ text: request.text, entities: analysis.entities, decisions: request.decisions });
+  const plan = runtime.buildProtectionPlan({
+    text: request.text,
+    entities: analysis.entities,
+    decisions: request.decisions,
+    credentialIdFactory: () => crypto.randomUUID()
+  });
   return runtime.session.save(plan);
 }
 
@@ -275,7 +306,7 @@ async function createBrowserRuntime() {
     import("@brainbuddy/memory-engine"),
     import("@brainbuddy/privacy-engine")
   ]);
-  const engine = new PrivacyEngine({ knownEntities: [{ id: "demo-person-zhang-wei", canonicalName: "张伟", entityType: "person", token: "[PERSON_A]", aliases: [], defaultPolicy: "replace_with_token" }] });
+  const engine = new PrivacyEngine({ knownEntities: [{ id: "demo-person-zhang-wei", canonicalName: "张伟", entityType: "person", token: "[PERSON_A]", aliases: [], defaultPolicy: "keep_original" }] });
   return { engine, session: new DemoMemorySession(), buildProtectionPlan, toProtectionPreview };
 }
 

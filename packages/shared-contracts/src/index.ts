@@ -20,7 +20,8 @@ export const ProtectionRequestSchema = z.object({
   decisions: z.array(z.object({
     start: z.number().int().nonnegative(),
     end: z.number().int().nonnegative(),
-    policy: z.enum(["keep_original", "replace_with_token", "original_only", "move_to_vault"])
+    policy: z.enum(["keep_original", "move_to_vault"]),
+    credentialId: z.string().uuid().optional()
   })).max(500)
 });
 

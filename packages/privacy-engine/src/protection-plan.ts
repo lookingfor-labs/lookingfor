@@ -5,7 +5,6 @@ import type {
   ProtectionDecision,
   ProtectionPlan,
   ProtectionPreview,
-  ProtectionPolicy,
   SafetyCheck
 } from "@brainbuddy/domain";
 
@@ -22,12 +21,13 @@ export interface BuildProtectionPlanInput {
   readonly text: string;
   readonly entities: readonly DetectedEntity[];
   readonly decisions: readonly ProtectionDecision[];
+  readonly credentialIdFactory: () => string;
 }
 
 export function buildProtectionPlan(input: BuildProtectionPlanInput): ProtectionPlan {
   const entities = [...input.entities].sort((left, right) => left.start - right.start);
   const decisionMap = new Map(
-    input.decisions.map((decision) => [entityKey(decision), decision.policy])
+    input.decisions.map((decision) => [entityKey(decision), decision])
   );
   if (input.decisions.length !== entities.length || decisionMap.size !== entities.length) {
     throw new Error("Every detected entity requires one protection decision");
@@ -37,27 +37,41 @@ export function buildProtectionPlan(input: BuildProtectionPlanInput): Protection
   let memoryContent = "";
   let protectedContent = "";
   const credentialDrafts: CredentialDraft[] = [];
-  const credentialCounts = new Map<EntityType, number>();
+  const credentialIds = new Set<string>();
 
   for (const entity of entities) {
     validateEntity(input.text, entity, cursor);
-    const policy = decisionMap.get(entityKey(entity));
-    if (!policy) {
+    const decision = decisionMap.get(entityKey(entity));
+    if (!decision) {
       throw new Error("Every detected entity requires one protection decision");
     }
+    const { policy } = decision;
     if (policy === "move_to_vault" && !credentialTypes.has(entity.type)) {
       throw new Error("Only credential entities can move to the vault");
     }
 
-    const token = replacementToken(entity, policy, credentialCounts);
+    const credentialId = policy === "move_to_vault"
+      ? decision.credentialId ?? input.credentialIdFactory()
+      : undefined;
+    if (credentialId && (!isCredentialId(credentialId) || credentialIds.has(credentialId))) {
+      throw new Error("Credential ids must be unique UUIDs");
+    }
+    if (credentialId) credentialIds.add(credentialId);
+
+    const token = policy === "move_to_vault"
+      ? `[CREDENTIAL:${credentialId}]`
+      : entity.replacementToken ?? `[${entity.type.toUpperCase()}]`;
     memoryContent += input.text.slice(cursor, entity.start);
     memoryContent += memoryValue(entity, policy, token);
     protectedContent += input.text.slice(cursor, entity.start);
     protectedContent += protectedValue(entity, policy, token);
 
-    if (policy === "move_to_vault") {
+    if (policy === "move_to_vault" && credentialId) {
       credentialDrafts.push({
+        credentialId,
         ref: token,
+        start: entity.start,
+        end: entity.end,
         entityType: entity.type,
         secret: entity.text,
         maskedValue: maskSecret(entity.text)
@@ -86,8 +100,11 @@ export function toProtectionPreview(plan: ProtectionPlan): ProtectionPreview {
   return {
     memoryContent: plan.memoryContent,
     protectedContent: plan.protectedContent,
-    credentials: plan.credentialDrafts.map(({ ref, entityType, maskedValue }) => ({
+    credentials: plan.credentialDrafts.map(({ credentialId, ref, start, end, entityType, maskedValue }) => ({
+      credentialId,
       ref,
+      start,
+      end,
       entityType,
       maskedValue
     })),
@@ -102,27 +119,17 @@ function validateEntity(text: string, entity: DetectedEntity, cursor: number): v
   }
 }
 
-function replacementToken(
-  entity: DetectedEntity,
-  policy: ProtectionPolicy,
-  credentialCounts: Map<EntityType, number>
-): string {
-  const base = entity.replacementToken ?? `[${entity.type.toUpperCase()}]`;
-  if (policy !== "move_to_vault") return base;
-
-  const count = (credentialCounts.get(entity.type) ?? 0) + 1;
-  credentialCounts.set(entity.type, count);
-  if (count === 1) return base;
-  return base.endsWith("]") ? `${base.slice(0, -1)}_${count}]` : `${base}_${count}`;
+function memoryValue(entity: DetectedEntity, policy: ProtectionDecision["policy"], token: string): string {
+  return policy === "move_to_vault" ? token : entity.text;
 }
 
-function memoryValue(entity: DetectedEntity, policy: ProtectionPolicy, token: string): string {
-  return policy === "replace_with_token" || policy === "move_to_vault" ? token : entity.text;
-}
-
-function protectedValue(entity: DetectedEntity, policy: ProtectionPolicy, token: string): string {
-  const mustProtect = entity.risk === "critical" || entity.risk === "high";
+function protectedValue(entity: DetectedEntity, policy: ProtectionDecision["policy"], token: string): string {
+  const mustProtect = entity.risk === "critical" || entity.risk === "high" || entity.replacementToken !== undefined;
   return policy === "keep_original" && !mustProtect ? entity.text : token;
+}
+
+function isCredentialId(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(value);
 }
 
 function buildSafetyChecks(
