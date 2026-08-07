@@ -8,6 +8,10 @@ import {
   AnalyzeInputRequestSchema,
   PREVIEW_PROTECTION_CHANNEL,
   ProtectionRequestSchema,
+  REVEAL_DEMO_SOURCE_CHANNEL,
+  RevealDemoSourceRequestSchema,
+  SEARCH_DEMO_MEMORIES_CHANNEL,
+  SearchDemoMemoriesRequestSchema,
   SAVE_DEMO_CANDIDATE_CHANNEL
 } from "@brainbuddy/shared-contracts";
 
@@ -75,8 +79,16 @@ app.whenReady().then(() => {
     toProtectionPreview(createProtectionPlan(request))
   );
   ipcMain.handle(SAVE_DEMO_CANDIDATE_CHANNEL, (_event, request: unknown) =>
-    demoMemorySession.save(createProtectionPlan(request))
+    demoMemorySession.save(createProtectionPlan(request), ProtectionRequestSchema.parse(request).text)
   );
+  ipcMain.handle(SEARCH_DEMO_MEMORIES_CHANNEL, (_event, request: unknown) => {
+    const { query } = SearchDemoMemoriesRequestSchema.parse(request);
+    return demoMemorySession.search(query);
+  });
+  ipcMain.handle(REVEAL_DEMO_SOURCE_CHANNEL, (_event, request: unknown) => {
+    const { sourceId } = RevealDemoSourceRequestSchema.parse(request);
+    return demoMemorySession.revealSource(sourceId);
+  });
   createWindow();
 
   app.on("activate", () => {

@@ -82,10 +82,25 @@ export interface ProtectionPreview {
 
 export interface DemoSaveReceipt {
   readonly memoryId: string;
+  readonly sourceId: string;
   readonly credentialIds: readonly string[];
   readonly savedAt: string;
   readonly storage: "memory_session";
   readonly preview: ProtectionPreview;
+}
+
+export interface DemoMemorySummary {
+  readonly memoryId: string;
+  readonly sourceId: string;
+  readonly memoryContent: string;
+  readonly credentialIds: readonly string[];
+  readonly savedAt: string;
+}
+
+export interface DemoSourceReveal {
+  readonly sourceId: string;
+  readonly originalContent: string;
+  readonly savedAt: string;
 }
 
 export interface Memory {
