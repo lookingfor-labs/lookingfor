@@ -1,8 +1,11 @@
 import { fileURLToPath } from "node:url";
 import react from "@vitejs/plugin-react";
+import { config as loadDotEnv } from "dotenv";
 import { defineConfig } from "vite";
+import { aiQueryMiddleware } from "./src/dev/ai-query-middleware";
 
 const desktopRoot = fileURLToPath(new URL(".", import.meta.url));
+loadDotEnv({ path: fileURLToPath(new URL("../../.env", import.meta.url)), quiet: true });
 
 export default defineConfig({
   root: fileURLToPath(new URL("./src/renderer", import.meta.url)),
@@ -16,7 +19,13 @@ export default defineConfig({
       "@renderer": fileURLToPath(new URL("./src/renderer/src", import.meta.url))
     }
   },
-  plugins: [react()],
+  plugins: [
+    aiQueryMiddleware({
+      apiKey: process.env.SECRET_DEEPSEEK_API_KEY ?? "",
+      ...(process.env.SECRET_DEEPSEEK_MODEL ? { modelId: process.env.SECRET_DEEPSEEK_MODEL } : {})
+    }),
+    react()
+  ],
   cacheDir: fileURLToPath(new URL("../../node_modules/.vite/brainbuddy-browser", import.meta.url)),
   envDir: desktopRoot
 });

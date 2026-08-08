@@ -6,7 +6,7 @@ export default defineConfig({
   main: {
     plugins: [
       externalizeDepsPlugin({
-        exclude: ["@brainbuddy/domain", "@brainbuddy/privacy-engine", "@brainbuddy/shared-contracts"]
+        exclude: ["@brainbuddy/ai-query", "@brainbuddy/domain", "@brainbuddy/privacy-engine", "@brainbuddy/shared-contracts"]
       })
     ]
   },

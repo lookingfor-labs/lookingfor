@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import type {
+  AiActionIntent,
+  AiQueryDraft,
+  AiQueryEvent,
   DemoCredentialSummary,
   DemoOfflineSearchResult,
   DemoQueryResult,
@@ -21,7 +24,7 @@ const demoNavigation: readonly { id: DemoPage; number: string; label: string; st
   { id: "protect", number: "01", label: "输入与保护", status: "ready" },
   { id: "save", number: "02", label: "保存与来源", status: "next" },
   { id: "search", number: "03", label: "本地查询", status: "next" },
-  { id: "ai", number: "04", label: "AI 查询", status: "planned" },
+  { id: "ai", number: "04", label: "AI 查询", status: "ready" },
   { id: "agent", number: "05", label: "Agent 实验室", status: "planned" }
 ];
 
@@ -214,7 +217,7 @@ export function App(): JSX.Element {
             <em>{item.status === "ready" ? "可验收" : item.status === "next" ? "本地数据库" : "界面预览"}</em>
           </button>)}
         </nav>
-        <div className="sidebar-foot"><span><i /> 本地运行</span><span>AI 请求 0</span><small>{usesPersistentDatabase ? "Source 与凭据已保存到本地 SQLite" : "浏览器验收模式使用会话内存"}</small></div>
+        <div className="sidebar-foot"><span><i /> 本地运行</span><span>{activePage === "ai" ? "DeepSeek 已接入" : "AI 请求只在 04 发起"}</span><small>{usesPersistentDatabase ? "Source 与凭据已保存到本地 SQLite" : "浏览器验收模式使用会话内存"}</small></div>
       </aside>
 
       <main className="shell">
@@ -301,7 +304,7 @@ export function App(): JSX.Element {
 
       {activePage === "save" && <SavePage sources={sources} receipt={receipt} isPersistent={usesPersistentDatabase} isLoading={isLoadingRecords} revealedSource={revealedSource} onReveal={revealSource} onCloseReveal={() => setRevealedSource(undefined)} onGoProtect={() => navigate("protect")} />}
       {activePage === "search" && <SearchPage query={searchQuery} sources={sources} credentials={credentials} queryReceipt={queryReceipt} isLoading={isLoadingRecords} revealedSource={revealedSource} onQueryChange={setSearchQuery} onSearch={() => void submitQuery()} onReveal={revealSource} onCloseReveal={() => setRevealedSource(undefined)} />}
-      {activePage === "ai" && <AiPreviewPage />}
+      {activePage === "ai" && <AiQueryPage />}
       {activePage === "agent" && <AgentPreviewPage />}
       {activePage !== "protect" && error && <p className="error" role="alert">{error}</p>}
       </main>
@@ -364,15 +367,169 @@ function SearchPage({ query, sources, credentials, queryReceipt, isLoading, reve
   </>;
 }
 
-function AiPreviewPage(): JSX.Element {
+type AiInspectorTab = "answer" | "input" | "response" | "actions" | "audit";
+
+function AiQueryPage(): JSX.Element {
+  const [query, setQuery] = useState("找一下之前做界面原型时常用的那个网站账号，并告诉我还需要执行什么动作。");
+  const [draft, setDraft] = useState<AiQueryDraft>();
+  const [events, setEvents] = useState<readonly AiQueryEvent[]>([]);
+  const [activeTab, setActiveTab] = useState<AiInspectorTab>("answer");
+  const [isPreparing, setIsPreparing] = useState(false);
+  const [isRunning, setIsRunning] = useState(false);
+  const [error, setError] = useState<string>();
+  const abortRef = useRef<AbortController>();
+
+  useEffect(() => () => abortRef.current?.abort(), []);
+
+  const completed = [...events].reverse().find((event) => event.type === "completed");
+  const failed = [...events].reverse().find((event) => event.type === "failed");
+  const answer = completed?.type === "completed" ? completed.answer : undefined;
+  const streamedText = events.filter((event) => event.type === "text_delta").map((event) => event.type === "text_delta" ? event.delta : "").join("");
+  const streamedThinking = events.filter((event) => event.type === "thinking_delta").map((event) => event.type === "thinking_delta" ? event.delta : "").join("");
+  const providerPayload = [...events].reverse().find((event) => event.type === "provider_payload");
+  const toolCalls = events.filter((event) => event.type === "tool_call");
+  const terminal = Boolean(completed || failed);
+
+  async function prepare(): Promise<void> {
+    if (!query.trim()) return;
+    abortRef.current?.abort();
+    setIsPreparing(true);
+    setError(undefined);
+    setDraft(undefined);
+    setEvents([]);
+    setActiveTab("input");
+    try {
+      setDraft(await prepareAiQuery(query));
+    } catch (nextError) {
+      setError(errorMessage(nextError));
+    } finally {
+      setIsPreparing(false);
+    }
+  }
+
+  async function run(): Promise<void> {
+    if (!draft || isRunning) return;
+    const controller = new AbortController();
+    abortRef.current = controller;
+    setEvents([]);
+    setError(undefined);
+    setIsRunning(true);
+    setActiveTab("answer");
+    try {
+      await streamAiQuery(draft.draftId, (event) => setEvents((current) => [...current, event]), controller.signal);
+    } catch (nextError) {
+      if (!controller.signal.aborted) setError(errorMessage(nextError));
+    } finally {
+      abortRef.current = undefined;
+      setIsRunning(false);
+    }
+  }
+
+  function cancel(): void {
+    abortRef.current?.abort();
+  }
+
+  const tabs: readonly { id: AiInspectorTab; label: string }[] = [
+    { id: "answer", label: "最终回答" },
+    { id: "input", label: "Pi-AI 输入原文" },
+    { id: "response", label: "模型回复原文" },
+    { id: "actions", label: `动作意图${answer?.proposedActions.length ? ` ${answer.proposedActions.length}` : ""}` },
+    { id: "audit", label: "调用审计" }
+  ];
+
   return <>
-    <PageIntro number="04" kicker="UI PREVIEW · NO INTERFACE" title="AI 查询" copy="这里将把本地查询得到的记忆候选交给 AI 做模糊判断。当前只有交互意图，没有连接模型或网络接口。" />
-    <div className="future-grid">
-      <section className="future-card"><span>01</span><h3>提出模糊问题</h3><textarea disabled value="找一下之前做界面原型时常用的那个网站账号。" readOnly /><button type="button" disabled>接口尚未接入</button></section>
-      <section className="future-card"><span>02</span><h3>核对独立 Memory</h3><pre>{`文件：memories/design-tools.md\n内容：常用的界面原型工具账号\n凭据：[CREDENTIAL:<UUID>]`}</pre><p>AI 总结产生独立文件；它可以没有 Source 引用，也可以按需保留多个引用。</p></section>
-      <section className="future-card"><span>03</span><h3>定位并更新文件</h3><pre>{`{\n  "memoryPath": "memories/design-tools.md",\n  "operation": "update"\n}`}</pre><p>Memory 由受控文件路径定位，可读写、修改和更新；界面不再暴露额外业务标识。</p></section>
-    </div>
+    <PageIntro number="04" kicker="DEEPSEEK · SINGLE STREAM" title="AI 查询" copy="先核对发送给 pi-ai 的完整输入，再观察 DeepSeek 原始回复和动作意图。本页面不会执行任何动作。" />
+
+    <section className="ai-query-composer panel">
+      <label htmlFor="ai-query-input">查询内容</label>
+      <textarea id="ai-query-input" value={query} maxLength={2_000} disabled={isPreparing || isRunning}
+        onChange={(event) => { setQuery(event.target.value); setDraft(undefined); setEvents([]); }} />
+      <div className="ai-query-controls">
+        <span>{draft ? `已创建查询 Source：${draft.querySourceId}` : "准备阶段只访问本地记录"}</span>
+        <button type="button" className="secondary-action" disabled={!query.trim() || isPreparing || isRunning} onClick={() => void prepare()}>{isPreparing ? "正在准备" : "准备查询"}</button>
+        {isRunning
+          ? <button type="button" className="danger-action" onClick={cancel}>取消调用</button>
+          : <button type="button" className="primary-action" disabled={!draft || terminal} onClick={() => void run()}>确认调用 DeepSeek</button>}
+      </div>
+    </section>
+
+    {error && <p className="error" role="alert">{error}</p>}
+    {draft && <section className="ai-call-summary" aria-label="AI 调用状态">
+      <div><small>供应商</small><strong>DeepSeek</strong></div>
+      <div><small>模型</small><strong>{draft.model}</strong></div>
+      <div><small>候选引用</small><strong>{draft.candidateIds.length}</strong></div>
+      <div><small>状态</small><strong>{isRunning ? "流式接收中" : failed ? "调用失败" : completed ? "调用完成" : "等待确认"}</strong></div>
+    </section>}
+
+    <section className="ai-inspector panel">
+      <nav className="ai-tabs" aria-label="AI 查询检查视图">
+        {tabs.map((tab) => <button type="button" key={tab.id} className={activeTab === tab.id ? "active" : ""} onClick={() => setActiveTab(tab.id)}>{tab.label}</button>)}
+      </nav>
+      <div className="ai-inspector-body">
+        {activeTab === "answer" && <AnswerView answer={answer} streamedText={streamedText} isRunning={isRunning} validationError={completed?.type === "completed" ? completed.validationError : undefined} failed={failed?.type === "failed" ? failed.message : undefined} />}
+        {activeTab === "input" && <RawView title="传给 pi-ai models.stream() 的完整 Context" value={draft?.context} empty="点击“准备查询”生成并核对提示词原文。" />}
+        {activeTab === "response" && <ResponseView completed={completed} streamedText={streamedText} streamedThinking={streamedThinking} toolCalls={toolCalls} />}
+        {activeTab === "actions" && <ActionIntentView actions={answer?.proposedActions ?? []} hasResult={Boolean(completed)} />}
+        {activeTab === "audit" && <AuditView events={events} providerPayload={providerPayload?.type === "provider_payload" ? providerPayload.payload : undefined} />}
+      </div>
+    </section>
   </>;
+}
+
+function AnswerView({ answer, streamedText, isRunning, validationError, failed }: {
+  readonly answer: { readonly answer: string; readonly references: readonly { readonly kind: string; readonly id: string }[] } | undefined;
+  readonly streamedText: string;
+  readonly isRunning: boolean;
+  readonly validationError: string | undefined;
+  readonly failed: string | undefined;
+}): JSX.Element {
+  if (failed) return <div className="ai-empty-state"><strong>DeepSeek 调用未完成</strong><p>{failed}</p></div>;
+  if (validationError) return <div className="ai-empty-state warning"><strong>保留了模型原文，但结构化结果未通过校验</strong><p>{validationError}</p></div>;
+  if (!answer && !streamedText) return <div className="ai-empty-state"><strong>{isRunning ? "正在等待第一个内容片段" : "还没有调用模型"}</strong><p>先准备查询并核对输入原文，然后确认调用 DeepSeek。</p></div>;
+  return <div className="ai-answer"><p>{answer?.answer || streamedText}</p>{answer && <div className="reference-list"><strong>模型引用</strong>{answer.references.length ? answer.references.map((reference) => <code key={`${reference.kind}:${reference.id}`}>{reference.kind}: {reference.id}</code>) : <span>没有引用本地候选</span>}</div>}</div>;
+}
+
+function ResponseView({ completed, streamedText, streamedThinking, toolCalls }: {
+  readonly completed: AiQueryEvent | undefined;
+  readonly streamedText: string;
+  readonly streamedThinking: string;
+  readonly toolCalls: readonly AiQueryEvent[];
+}): JSX.Element {
+  const rawMessage = completed?.type === "completed" ? completed.rawMessage : {
+    role: "assistant",
+    state: "streaming",
+    text: streamedText,
+    ...(streamedThinking ? { thinking: streamedThinking } : {}),
+    toolCalls: toolCalls.map((event) => event.type === "tool_call" ? event.toolCall : undefined).filter(Boolean)
+  };
+  return <div className="raw-stack">
+    {streamedThinking && <details><summary>供应商返回的 thinking 内容</summary><pre>{streamedThinking}</pre></details>}
+    <RawView title="pi-ai 归一化 AssistantMessage" value={completed || streamedText || toolCalls.length ? rawMessage : undefined} empty="模型回复会在调用开始后显示。" />
+  </div>;
+}
+
+function ActionIntentView({ actions, hasResult }: { readonly actions: readonly AiActionIntent[]; readonly hasResult: boolean }): JSX.Element {
+  if (!hasResult) return <div className="ai-empty-state"><strong>还没有动作意图</strong><p>动作来自模型显式返回的 proposedActions，不会推测隐藏思维。</p></div>;
+  if (!actions.length) return <div className="ai-empty-state safe"><strong>模型没有提出后续动作</strong><p>本次调用只产生回答和引用。</p></div>;
+  return <div className="action-intent-list">{actions.map((action, index) => <article key={`${action.kind}:${index}`}>
+    <header><span>{actionLabel(action.kind)}</span><strong>仅提议，未执行</strong></header>
+    {action.kind === "tool_call" && <><code>{action.toolName}</code><pre>{formatJson(action.arguments)}</pre></>}
+    {(action.kind === "file_read" || action.kind === "file_write") && <code>{action.path}</code>}
+    {(action.kind === "memory_create" || action.kind === "memory_update") && <code>{action.target || "未指定 Memory 路径"}</code>}
+    {"contentSummary" in action && <p>{action.contentSummary}</p>}
+    <small>{action.reason}</small>
+  </article>)}</div>;
+}
+
+function AuditView({ events, providerPayload }: { readonly events: readonly AiQueryEvent[]; readonly providerPayload: unknown }): JSX.Element {
+  return <div className="audit-layout">
+    <div className="audit-timeline"><strong>事件时间线</strong>{events.length ? events.map((event, index) => <p key={`${event.at}:${index}`}><time>{new Date(event.at).toLocaleTimeString("zh-CN")}</time><span>{eventLabel(event.type)}</span></p>) : <span>等待调用</span>}</div>
+    <RawView title="onPayload 捕获的实际厂商请求体" value={providerPayload} empty="真正开始调用后才会生成厂商请求体。" />
+  </div>;
+}
+
+function RawView({ title, value, empty }: { readonly title: string; readonly value: unknown; readonly empty: string }): JSX.Element {
+  return <section className="raw-view"><header><strong>{title}</strong><small>{value === undefined ? "暂无数据" : "完整 JSON"}</small></header>{value === undefined ? <p>{empty}</p> : <pre>{formatJson(value)}</pre>}</section>;
 }
 
 function AgentPreviewPage(): JSX.Element {
@@ -430,7 +587,7 @@ function EntityCard({ entity, policy, onChange }: {
 }
 
 function PreviewCard({ index, title, hint, content }: { readonly index: string; readonly title: string; readonly hint: string; readonly content: string | undefined }): JSX.Element {
-  return <article className="view-card"><header><span>{index}</span><div><strong>{title}</strong><small>{hint}</small></div></header><p className="view-content">{content || "—"}</p></article>;
+  return <article className="view-card"><header><span>{index}</span><div><strong>{title}</strong><small>{hint}</small></div></header><p className="view-content">{content || "暂无"}</p></article>;
 }
 
 function entityKey(entity: Pick<DetectedEntity, "start" | "end">): string {
@@ -521,6 +678,141 @@ async function submitDemoQuery(text: string): Promise<DemoQueryResult> {
 async function revealDemoSource(sourceId: string): Promise<DemoSourceReveal> {
   if (window.brainBuddy) return window.brainBuddy.revealDemoSource({ sourceId });
   return (await browserRuntime()).session.revealSource(sourceId);
+}
+
+async function prepareAiQuery(text: string): Promise<AiQueryDraft> {
+  if (window.brainBuddy) return window.brainBuddy.prepareAiQuery({ text });
+  const submitted = await submitDemoQuery(text);
+  const allCandidates = await searchDemoSources("");
+  return postJson<AiQueryDraft>("/api/ai-query/prepare", {
+    query: submitted.receipt.preview.protectedContent,
+    querySource: {
+      sourceId: submitted.receipt.sourceId,
+      kind: submitted.receipt.kind,
+      protectedContent: submitted.receipt.preview.protectedContent,
+      credentialIds: submitted.receipt.credentialIds,
+      savedAt: submitted.receipt.savedAt
+    },
+    sources: allCandidates.sources.filter(({ sourceId }) => sourceId !== submitted.receipt.sourceId),
+    credentials: allCandidates.credentials
+  });
+}
+
+async function streamAiQuery(
+  draftId: string,
+  onEvent: (event: AiQueryEvent) => void,
+  signal: AbortSignal
+): Promise<void> {
+  if (window.brainBuddy) {
+    let runId: string | undefined;
+    let settled = false;
+    const queued: Array<{ readonly runId: string; readonly event: AiQueryEvent }> = [];
+    return new Promise<void>((resolve, reject) => {
+      const finish = (event: AiQueryEvent) => {
+        onEvent(event);
+        if (event.type === "completed" || event.type === "failed") {
+          settled = true;
+          unsubscribe();
+          signal.removeEventListener("abort", abort);
+          resolve();
+        }
+      };
+      const handle = (payload: { readonly runId: string; readonly event: AiQueryEvent }) => {
+        if (!runId) queued.push(payload);
+        else if (payload.runId === runId) finish(payload.event);
+      };
+      const unsubscribe = window.brainBuddy!.onAiQueryEvent(handle);
+      const abort = () => {
+        if (runId) void window.brainBuddy!.cancelAiQuery({ runId });
+      };
+      signal.addEventListener("abort", abort, { once: true });
+      void window.brainBuddy!.startAiQuery({ draftId }).then((started) => {
+        runId = started.runId;
+        queued.filter((payload) => payload.runId === runId).forEach((payload) => finish(payload.event));
+        if (signal.aborted) abort();
+      }).catch((error: unknown) => {
+        if (!settled) {
+          unsubscribe();
+          signal.removeEventListener("abort", abort);
+          reject(error);
+        }
+      });
+    });
+  }
+
+  const response = await fetch("/api/ai-query/run", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ draftId }),
+    signal
+  });
+  if (!response.ok) throw new Error(await responseError(response));
+  if (!response.body) throw new Error("浏览器没有返回可读取的流");
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let pending = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    pending += decoder.decode(value, { stream: !done });
+    const lines = pending.split("\n");
+    pending = lines.pop() ?? "";
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      const payload = JSON.parse(line) as { readonly event: AiQueryEvent };
+      onEvent(payload.event);
+    }
+    if (done) break;
+  }
+  if (pending.trim()) onEvent((JSON.parse(pending) as { readonly event: AiQueryEvent }).event);
+}
+
+async function postJson<T>(url: string, body: unknown): Promise<T> {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  if (!response.ok) throw new Error(await responseError(response));
+  return response.json() as Promise<T>;
+}
+
+async function responseError(response: Response): Promise<string> {
+  try {
+    const value = await response.json() as { readonly error?: string };
+    return value.error || `请求失败 (${response.status})`;
+  } catch {
+    return `请求失败 (${response.status})`;
+  }
+}
+
+function formatJson(value: unknown): string {
+  return JSON.stringify(value, null, 2);
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "AI 查询失败，请检查 DeepSeek 配置。";
+}
+
+function actionLabel(kind: AiActionIntent["kind"]): string {
+  return ({
+    tool_call: "工具调用",
+    file_read: "读取文件",
+    file_write: "写入文件",
+    memory_create: "创建 Memory",
+    memory_update: "更新 Memory"
+  } as const)[kind];
+}
+
+function eventLabel(type: AiQueryEvent["type"]): string {
+  return ({
+    started: "开始调用 pi-ai",
+    provider_payload: "生成厂商请求体",
+    text_delta: "收到文本片段",
+    thinking_delta: "收到 thinking 片段",
+    tool_call: "收到工具调用",
+    completed: "模型调用完成",
+    failed: "模型调用失败"
+  } as const)[type];
 }
 
 let runtimePromise: ReturnType<typeof createBrowserRuntime> | undefined;

@@ -123,6 +123,79 @@ export interface DemoQueryResult extends DemoOfflineSearchResult {
   readonly receipt: DemoSaveReceipt;
 }
 
+export type AiActionIntent =
+  | {
+      readonly kind: "tool_call";
+      readonly toolName: string;
+      readonly arguments: Readonly<Record<string, unknown>>;
+      readonly reason: string;
+    }
+  | {
+      readonly kind: "file_read";
+      readonly path: string;
+      readonly reason: string;
+    }
+  | {
+      readonly kind: "file_write";
+      readonly path: string;
+      readonly contentSummary: string;
+      readonly reason: string;
+    }
+  | {
+      readonly kind: "memory_create" | "memory_update";
+      readonly target?: string | undefined;
+      readonly contentSummary: string;
+      readonly reason: string;
+    };
+
+export interface AiQueryInput {
+  readonly query: string;
+  readonly querySource: DemoSourceSummary;
+  readonly sources: readonly DemoSourceSummary[];
+  readonly credentials: readonly DemoCredentialSummary[];
+}
+
+export interface AiQueryDraft {
+  readonly draftId: string;
+  readonly provider: "deepseek";
+  readonly model: string;
+  readonly createdAt: string;
+  readonly querySourceId: string;
+  readonly candidateIds: readonly string[];
+  readonly context: Readonly<Record<string, unknown>>;
+}
+
+export interface AiQueryAnswer {
+  readonly answer: string;
+  readonly references: readonly {
+    readonly kind: "source" | "credential" | "memory";
+    readonly id: string;
+  }[];
+  readonly proposedActions: readonly AiActionIntent[];
+}
+
+export type AiQueryEvent =
+  | { readonly type: "started"; readonly at: string }
+  | { readonly type: "provider_payload"; readonly at: string; readonly payload: unknown }
+  | { readonly type: "text_delta"; readonly at: string; readonly contentIndex: number; readonly delta: string }
+  | { readonly type: "thinking_delta"; readonly at: string; readonly contentIndex: number; readonly delta: string }
+  | { readonly type: "tool_call"; readonly at: string; readonly contentIndex: number; readonly toolCall: Readonly<Record<string, unknown>> }
+  | {
+      readonly type: "completed";
+      readonly at: string;
+      readonly stopReason: string;
+      readonly rawMessage: Readonly<Record<string, unknown>>;
+      readonly answer?: AiQueryAnswer | undefined;
+      readonly validationError?: string | undefined;
+    }
+  | {
+      readonly type: "failed";
+      readonly at: string;
+      readonly reason: "error" | "aborted";
+      readonly message: string;
+      readonly rawMessage?: Readonly<Record<string, unknown>> | undefined;
+    };
+
 export interface MemoryFile {
   readonly path: string;
   readonly content: string;
