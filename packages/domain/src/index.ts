@@ -16,7 +16,7 @@ export type ProtectionPolicy =
   | "keep_original"
   | "move_to_vault";
 
-export type SourceSubmissionKind = "write" | "query";
+export type SourceSubmissionKind = "capture" | "local_search" | "conversation";
 
 export interface DetectedEntity {
   readonly text: string;
@@ -148,33 +148,51 @@ export type AiActionIntent =
       readonly reason: string;
     };
 
-export interface AiQueryInput {
-  readonly query: string;
-  readonly querySource: DemoSourceSummary;
+export interface AiConversationInput {
+  readonly message: string;
+  readonly conversationSource: DemoSourceSummary;
   readonly sources: readonly DemoSourceSummary[];
   readonly credentials: readonly DemoCredentialSummary[];
+  readonly memories: readonly MemoryFile[];
 }
 
-export interface AiQueryDraft {
+export interface AiConversationDraft {
   readonly draftId: string;
   readonly provider: "deepseek";
   readonly model: string;
   readonly createdAt: string;
-  readonly querySourceId: string;
+  readonly conversationSourceId: string;
   readonly candidateIds: readonly string[];
+  readonly memories: readonly MemoryFile[];
   readonly context: Readonly<Record<string, unknown>>;
 }
 
-export interface AiQueryAnswer {
-  readonly answer: string;
+export type MemoryOperation =
+  | {
+      readonly operation: "create";
+      readonly path: string;
+      readonly content: string;
+      readonly reason: string;
+    }
+  | {
+      readonly operation: "update";
+      readonly path: string;
+      readonly expectedVersion: string;
+      readonly content: string;
+      readonly reason: string;
+    };
+
+export interface AiConversationResponse {
+  readonly message: string;
   readonly references: readonly {
     readonly kind: "source" | "credential" | "memory";
     readonly id: string;
   }[];
-  readonly proposedActions: readonly AiActionIntent[];
+  readonly memoryOperations: readonly MemoryOperation[];
+  readonly otherIntents: readonly AiActionIntent[];
 }
 
-export type AiQueryEvent =
+export type AiConversationEvent =
   | { readonly type: "started"; readonly at: string }
   | { readonly type: "provider_payload"; readonly at: string; readonly payload: unknown }
   | { readonly type: "text_delta"; readonly at: string; readonly contentIndex: number; readonly delta: string }
@@ -185,7 +203,7 @@ export type AiQueryEvent =
       readonly at: string;
       readonly stopReason: string;
       readonly rawMessage: Readonly<Record<string, unknown>>;
-      readonly answer?: AiQueryAnswer | undefined;
+      readonly response?: AiConversationResponse | undefined;
       readonly validationError?: string | undefined;
     }
   | {
@@ -202,6 +220,7 @@ export interface MemoryFile {
   readonly sourceIds: readonly string[];
   readonly credentialIds: readonly string[];
   readonly updatedAt: string;
+  readonly version: string;
 }
 
 export interface EntityMapping {

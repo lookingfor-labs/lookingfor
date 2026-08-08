@@ -3,17 +3,20 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { app, BrowserWindow, ipcMain, shell } from "electron";
 import { config as loadDotEnv } from "dotenv";
-import { createDeepSeekAiQueryEngine, type AiQueryEngine } from "@brainbuddy/ai-query";
+import { createDeepSeekAiConversationEngine, type AiConversationEngine } from "@brainbuddy/ai-conversation";
+import { FileMemoryStore, type MemoryStore } from "@brainbuddy/memory-engine/memory";
 import { SqliteSourceStore } from "@brainbuddy/memory-engine/sqlite";
 import { buildProtectionPlan, PrivacyEngine, toProtectionPreview } from "@brainbuddy/privacy-engine";
 import {
   ANALYZE_INPUT_CHANNEL,
-  AI_QUERY_EVENT_CHANNEL,
+  AI_CONVERSATION_EVENT_CHANNEL,
+  APPLY_MEMORY_OPERATION_CHANNEL,
+  ApplyMemoryOperationRequestSchema,
   AnalyzeInputRequestSchema,
-  CANCEL_AI_QUERY_CHANNEL,
-  CancelAiQueryRequestSchema,
-  PREPARE_AI_QUERY_CHANNEL,
-  PrepareAiQueryRequestSchema,
+  CANCEL_AI_CONVERSATION_CHANNEL,
+  CancelAiConversationRequestSchema,
+  PREPARE_AI_CONVERSATION_CHANNEL,
+  PrepareAiConversationRequestSchema,
   PREVIEW_PROTECTION_CHANNEL,
   ProtectionRequestSchema,
   REVEAL_DEMO_SOURCE_CHANNEL,
@@ -23,8 +26,8 @@ import {
   SUBMIT_DEMO_QUERY_CHANNEL,
   SubmitDemoQueryRequestSchema,
   SAVE_DEMO_CANDIDATE_CHANNEL,
-  START_AI_QUERY_CHANNEL,
-  StartAiQueryRequestSchema
+  START_AI_CONVERSATION_CHANNEL,
+  StartAiConversationRequestSchema
 } from "@brainbuddy/shared-contracts";
 
 loadDotEnv({ quiet: true });
@@ -42,16 +45,17 @@ const privacyEngine = new PrivacyEngine({
   ]
 });
 let sourceStore: SqliteSourceStore | undefined;
-let aiQueryEngine: AiQueryEngine | undefined;
-const aiDrafts = new Map<string, ReturnType<AiQueryEngine["prepare"]>>();
+let memoryStore: MemoryStore | undefined;
+let aiConversationEngine: AiConversationEngine | undefined;
+const aiDrafts = new Map<string, ReturnType<AiConversationEngine["prepare"]>>();
 const aiRuns = new Map<string, AbortController>();
 
-function getAiQueryEngine(): AiQueryEngine {
-  aiQueryEngine ??= createDeepSeekAiQueryEngine({
+function getAiConversationEngine(): AiConversationEngine {
+  aiConversationEngine ??= createDeepSeekAiConversationEngine({
     apiKey: process.env.SECRET_DEEPSEEK_API_KEY ?? "",
     ...(process.env.SECRET_DEEPSEEK_MODEL ? { modelId: process.env.SECRET_DEEPSEEK_MODEL } : {})
   });
-  return aiQueryEngine;
+  return aiConversationEngine;
 }
 
 function createProtectionPlan(request: unknown) {
@@ -127,6 +131,7 @@ app.whenReady().then(() => {
     databasePath: join(dataDirectory, "brainbuddy.sqlite"),
     encryptionKey: loadEncryptionKey(dataDirectory)
   });
+  memoryStore = new FileMemoryStore({ rootDirectory: join(dataDirectory, "memories") });
   ipcMain.handle(ANALYZE_INPUT_CHANNEL, (_event, request: unknown) => {
     const { text } = AnalyzeInputRequestSchema.parse(request);
     return privacyEngine.analyze(text);
@@ -135,7 +140,7 @@ app.whenReady().then(() => {
     toProtectionPreview(createProtectionPlan(request))
   );
   ipcMain.handle(SAVE_DEMO_CANDIDATE_CHANNEL, (_event, request: unknown) =>
-    sourceStore!.save(createProtectionPlan(request), ProtectionRequestSchema.parse(request).text, "write")
+    sourceStore!.save(createProtectionPlan(request), ProtectionRequestSchema.parse(request).text, "capture")
   );
   ipcMain.handle(SEARCH_DEMO_SOURCES_CHANNEL, (_event, request: unknown) => {
     const { query } = SearchDemoSourcesRequestSchema.parse(request);
@@ -143,7 +148,7 @@ app.whenReady().then(() => {
   });
   ipcMain.handle(SUBMIT_DEMO_QUERY_CHANNEL, (_event, request: unknown) => {
     const { text } = SubmitDemoQueryRequestSchema.parse(request);
-    const receipt = sourceStore!.save(createSuggestedProtectionPlan(text), text, "query");
+    const receipt = sourceStore!.save(createSuggestedProtectionPlan(text), text, "local_search");
     const result = sourceStore!.searchOffline(text, receipt.sourceId);
     const submittedCredentials = sourceStore!.searchOffline("").credentials
       .filter((credential) => receipt.credentialIds.includes(credential.credentialId));
@@ -158,13 +163,13 @@ app.whenReady().then(() => {
     const { sourceId } = RevealDemoSourceRequestSchema.parse(request);
     return sourceStore!.revealSource(sourceId);
   });
-  ipcMain.handle(PREPARE_AI_QUERY_CHANNEL, (_event, request: unknown) => {
-    const { text } = PrepareAiQueryRequestSchema.parse(request);
-    const receipt = sourceStore!.save(createSuggestedProtectionPlan(text), text, "query");
+  ipcMain.handle(PREPARE_AI_CONVERSATION_CHANNEL, (_event, request: unknown) => {
+    const { text } = PrepareAiConversationRequestSchema.parse(request);
+    const receipt = sourceStore!.save(createSuggestedProtectionPlan(text), text, "conversation");
     const candidates = sourceStore!.searchOffline("", receipt.sourceId);
-    const draft = getAiQueryEngine().prepare({
-      query: receipt.preview.protectedContent,
-      querySource: {
+    const draft = getAiConversationEngine().prepare({
+      message: receipt.preview.protectedContent,
+      conversationSource: {
         sourceId: receipt.sourceId,
         kind: receipt.kind,
         protectedContent: receipt.preview.protectedContent,
@@ -172,30 +177,31 @@ app.whenReady().then(() => {
         savedAt: receipt.savedAt
       },
       sources: candidates.sources,
-      credentials: candidates.credentials
+      credentials: candidates.credentials,
+      memories: memoryStore!.list()
     });
     aiDrafts.set(draft.draftId, draft);
     return draft;
   });
-  ipcMain.handle(START_AI_QUERY_CHANNEL, (event, request: unknown) => {
-    const { draftId } = StartAiQueryRequestSchema.parse(request);
+  ipcMain.handle(START_AI_CONVERSATION_CHANNEL, (event, request: unknown) => {
+    const { draftId } = StartAiConversationRequestSchema.parse(request);
     const draft = aiDrafts.get(draftId);
-    if (!draft) throw new Error("AI query draft was not found or has expired");
+    if (!draft) throw new Error("AI conversation draft was not found or has expired");
     aiDrafts.delete(draftId);
     const runId = randomUUID();
     const controller = new AbortController();
     aiRuns.set(runId, controller);
     setImmediate(() => {
-      void getAiQueryEngine().run(draft, {
+      void getAiConversationEngine().run(draft, {
         signal: controller.signal,
         onEvent: (aiEvent) => {
           if (!event.sender.isDestroyed()) {
-            event.sender.send(AI_QUERY_EVENT_CHANNEL, { runId, event: aiEvent });
+            event.sender.send(AI_CONVERSATION_EVENT_CHANNEL, { runId, event: aiEvent });
           }
         }
       }).catch((error: unknown) => {
         if (!event.sender.isDestroyed()) {
-          event.sender.send(AI_QUERY_EVENT_CHANNEL, {
+          event.sender.send(AI_CONVERSATION_EVENT_CHANNEL, {
             runId,
             event: {
               type: "failed",
@@ -211,9 +217,13 @@ app.whenReady().then(() => {
     });
     return { runId };
   });
-  ipcMain.handle(CANCEL_AI_QUERY_CHANNEL, (_event, request: unknown) => {
-    const { runId } = CancelAiQueryRequestSchema.parse(request);
+  ipcMain.handle(CANCEL_AI_CONVERSATION_CHANNEL, (_event, request: unknown) => {
+    const { runId } = CancelAiConversationRequestSchema.parse(request);
     aiRuns.get(runId)?.abort();
+  });
+  ipcMain.handle(APPLY_MEMORY_OPERATION_CHANNEL, (_event, request: unknown) => {
+    const { operation } = ApplyMemoryOperationRequestSchema.parse(request);
+    return memoryStore!.apply(operation);
   });
   createWindow();
 
@@ -232,4 +242,5 @@ app.on("before-quit", () => {
   aiDrafts.clear();
   sourceStore?.close();
   sourceStore = undefined;
+  memoryStore = undefined;
 });

@@ -5,12 +5,16 @@ BrainBuddy preserves a user's original input while giving local search and AI a 
 ## Records
 
 **Original Input（原始输入）**:
-The complete text submitted by the user for either a write or a query.
+The complete text submitted by the user through any supported channel.
 _Avoid_: Keystroke log, autosaved draft
 
 **Source Record（原始记录）**:
-The preserved, private record of one user submission, including whether it was a write or query. Its Original Input is excluded from automatic AI context.
+The preserved, private record of one user submission and the channel where it occurred. Its Original Input is excluded from automatic AI context.
 _Avoid_: Log, audit log, memory backup
+
+**Conversation Turn（对话轮次）**:
+One user submission to AI. It may ask a question, provide information, or request a Memory change without being classified in advance.
+_Avoid_: AI query, write request, user intent
 
 **Memory（本地记忆）**:
 A mutable local file that AI can read, create, and update through controlled operations. It may reference zero or more Source Records and Credentials.
@@ -29,6 +33,10 @@ _Avoid_: Log ID, memory ID
 **Memory Path**:
 The controlled local path that locates a Memory file for reading or writing.
 _Avoid_: Memory ID, arbitrary filesystem path
+
+**Memory Operation（记忆操作）**:
+An AI-proposed create or update to one Memory Path. It remains a proposal until the user explicitly confirms it.
+_Avoid_: Automatic write, arbitrary file operation, tool call
 
 **Credential ID**:
 The stable identity of one Credential.

@@ -12,10 +12,10 @@ import {
 import { deepseekProvider } from "@earendil-works/pi-ai/providers/deepseek";
 import type {
   AiActionIntent,
-  AiQueryAnswer,
-  AiQueryDraft,
-  AiQueryEvent,
-  AiQueryInput
+  AiConversationDraft,
+  AiConversationEvent,
+  AiConversationInput,
+  AiConversationResponse
 } from "@brainbuddy/domain";
 
 const DEFAULT_MODEL = "deepseek-v4-flash";
@@ -39,56 +39,68 @@ const actionIntentSchema = Type.Union([
     path: Type.String({ minLength: 1, maxLength: 1_000 }),
     contentSummary: Type.String({ minLength: 1, maxLength: 2_000 }),
     reason: Type.String({ minLength: 1, maxLength: 1_000 })
-  }),
-  Type.Object({
-    kind: Type.Union([Type.Literal("memory_create"), Type.Literal("memory_update")]),
-    target: Type.Optional(Type.String({ minLength: 1, maxLength: 1_000 })),
-    contentSummary: Type.String({ minLength: 1, maxLength: 2_000 }),
-    reason: Type.String({ minLength: 1, maxLength: 1_000 })
   })
 ]);
 
-const answerTool: Tool = {
-  name: "brainbuddy_answer",
-  description: "Return the answer, local references, and declarative action intentions. Actions are observed only and will not be executed.",
+const responseTool: Tool = {
+  name: "brainbuddy_respond",
+  description: "Return the conversation response, references, proposed Memory operations, and other declarative intentions.",
   parameters: Type.Object({
-    answer: Type.String({ minLength: 1, maxLength: 20_000 }),
+    message: Type.String({ minLength: 1, maxLength: 20_000 }),
     references: Type.Array(Type.Object({
       kind: Type.Union([Type.Literal("source"), Type.Literal("credential"), Type.Literal("memory")]),
       id: Type.String({ minLength: 1, maxLength: 1_000 })
     }), { maxItems: 50 }),
-    proposedActions: Type.Array(actionIntentSchema, { maxItems: 30 })
+    memoryOperations: Type.Array(Type.Union([
+      Type.Object({
+        operation: Type.Literal("create"),
+        path: Type.String({ minLength: 1, maxLength: 1_000 }),
+        content: Type.String({ minLength: 1, maxLength: 50_000 }),
+        reason: Type.String({ minLength: 1, maxLength: 1_000 })
+      }),
+      Type.Object({
+        operation: Type.Literal("update"),
+        path: Type.String({ minLength: 1, maxLength: 1_000 }),
+        expectedVersion: Type.String({ minLength: 64, maxLength: 64 }),
+        content: Type.String({ minLength: 1, maxLength: 50_000 }),
+        reason: Type.String({ minLength: 1, maxLength: 1_000 })
+      })
+    ]), { maxItems: 20 }),
+    otherIntents: Type.Array(actionIntentSchema, { maxItems: 30 })
   })
 };
 
-const systemPrompt = `你是 BrainBuddy 的单次查询模型。请根据用户问题和本地候选给出答案。
+const systemPrompt = `你是 BrainBuddy 的对话模型。用户可能提问、提供新信息，或希望更新本地记忆；不要预判用户意图。
 
 规则：
-1. 只能引用本次上下文中出现的 Source ID、Credential ID 或 Memory 路径。
+1. 根据用户消息、Source、Credential 和 Memory 候选给出回复。
 2. 不得猜测、还原或输出凭据原文。凭据引用保持锁定状态。
-3. 必须调用 brainbuddy_answer 返回结构化结果。
-4. 如果你认为后续需要调用工具、读取文件、写入文件或修改 Memory，请把它写入 proposedActions。
-5. proposedActions 只是声明式意图，系统不会在本次调用中执行。
-6. 如果现有候选不足以回答，请明确说明，并返回空 references。`;
+3. 必须调用 brainbuddy_respond 返回结构化结果。
+4. 创建 Memory 时只能使用 memories/ 下的相对 Markdown 路径。
+5. 更新 Memory 时只能选择上下文中已有的 Memory Path，并原样返回其 version 作为 expectedVersion。
+6. Memory 内容如果来自某条 Source，必须保留 [SOURCE:<Source ID>]；涉及凭据时只保留 [CREDENTIAL:<Credential ID>]，不得写入原文。
+7. memoryOperations 只是提案，必须由用户确认后才能应用。
+8. 任意工具或非 Memory 文件意图放入 otherIntents，本次调用不会执行。
+9. 只能引用本次上下文中出现的 Source ID、Credential ID 或 Memory Path。`;
 
-export interface DeepSeekAiQueryEngineOptions {
+export interface DeepSeekAiConversationEngineOptions {
   readonly apiKey: string;
   readonly modelId?: string;
   readonly now?: () => Date;
   readonly idFactory?: () => string;
 }
 
-export interface AiQueryRunOptions {
+export interface AiConversationRunOptions {
   readonly signal?: AbortSignal;
-  readonly onEvent: (event: AiQueryEvent) => void;
+  readonly onEvent: (event: AiConversationEvent) => void;
 }
 
-export interface AiQueryEngine {
-  prepare(input: AiQueryInput): AiQueryDraft;
-  run(draft: AiQueryDraft, options: AiQueryRunOptions): Promise<void>;
+export interface AiConversationEngine {
+  prepare(input: AiConversationInput): AiConversationDraft;
+  run(draft: AiConversationDraft, options: AiConversationRunOptions): Promise<void>;
 }
 
-export function createDeepSeekAiQueryEngine(options: DeepSeekAiQueryEngineOptions): AiQueryEngine {
+export function createDeepSeekAiConversationEngine(options: DeepSeekAiConversationEngineOptions): AiConversationEngine {
   if (!options.apiKey.trim()) throw new Error("SECRET_DEEPSEEK_API_KEY is not configured");
   const models = createModels();
   const provider = deepseekProvider();
@@ -110,7 +122,7 @@ export function createDeepSeekAiQueryEngine(options: DeepSeekAiQueryEngineOption
       const stream = models.stream(model, context, {
         apiKey: options.apiKey,
         ...(runOptions.signal ? { signal: runOptions.signal } : {}),
-        toolChoice: { type: "function", function: { name: answerTool.name } },
+        toolChoice: { type: "function", function: { name: responseTool.name } },
         temperature: 0.2,
         maxTokens: 4_096,
         timeoutMs: 60_000,
@@ -133,13 +145,13 @@ export function createDeepSeekAiQueryEngine(options: DeepSeekAiQueryEngineOption
             toolCall: cloneJson(event.toolCall) as Readonly<Record<string, unknown>>
           });
         } else if (event.type === "done") {
-          const validation = validateAnswer(event.message, draft.candidateIds);
+          const validation = validateResponse(event.message, draft.candidateIds, draft.conversationSourceId);
           runOptions.onEvent({
             type: "completed",
             at: at(),
             stopReason: event.message.stopReason,
             rawMessage: cloneJson(event.message) as Readonly<Record<string, unknown>>,
-            ...(validation.answer ? { answer: validation.answer } : {}),
+            ...(validation.response ? { response: validation.response } : {}),
             ...(validation.error ? { validationError: validation.error } : {})
           });
         } else if (event.type === "error") {
@@ -147,7 +159,7 @@ export function createDeepSeekAiQueryEngine(options: DeepSeekAiQueryEngineOption
             type: "failed",
             at: at(),
             reason: event.reason,
-            message: event.error.errorMessage || (event.reason === "aborted" ? "查询已取消" : "DeepSeek 调用失败"),
+            message: event.error.errorMessage || (event.reason === "aborted" ? "对话已取消" : "DeepSeek 调用失败"),
             rawMessage: cloneJson(event.error) as Readonly<Record<string, unknown>>
           });
         }
@@ -157,20 +169,32 @@ export function createDeepSeekAiQueryEngine(options: DeepSeekAiQueryEngineOption
 }
 
 function buildDraft(
-  input: AiQueryInput,
+  input: AiConversationInput,
   model: Model<"openai-completions">,
   now: () => Date,
   idFactory: () => string
-): AiQueryDraft {
+): AiConversationDraft {
+  const conversationSource = {
+    sourceId: input.conversationSource.sourceId,
+    kind: input.conversationSource.kind,
+    protectedContent: input.conversationSource.protectedContent,
+    credentialIds: input.conversationSource.credentialIds,
+    savedAt: input.conversationSource.savedAt
+  };
   const sources = input.sources.slice(0, MAX_SOURCES).map(({ sourceId, kind, protectedContent, credentialIds, savedAt }) => ({
     sourceId, kind, protectedContent, credentialIds, savedAt
   }));
   const credentials = input.credentials.slice(0, MAX_CREDENTIALS).map(({ credentialId, entityType, maskedValue, sourceIds, savedAt }) => ({
     credentialId, entityType, maskedValue, sourceIds, savedAt
   }));
+  const memories = input.memories.map(({ path, content, sourceIds, credentialIds, updatedAt, version }) => ({
+    path, content, sourceIds, credentialIds, updatedAt, version
+  }));
   const candidateIds = [...new Set([
+    conversationSource.sourceId,
     ...sources.map(({ sourceId }) => sourceId),
-    ...credentials.map(({ credentialId }) => credentialId)
+    ...credentials.map(({ credentialId }) => credentialId),
+    ...memories.map(({ path }) => path)
   ])];
   const context: Context = {
     systemPrompt,
@@ -178,44 +202,72 @@ function buildDraft(
       role: "user",
       timestamp: now().getTime(),
       content: [
-        "用户问题（已按用户选择的本地策略处理）：",
-        input.query,
+        "用户消息（已按用户选择的本地策略处理）：",
+        input.message,
         "",
         "可引用的本地候选：",
-        JSON.stringify({ sources, credentials }, null, 2)
+        JSON.stringify({ conversationSource, sources, credentials, memories }, null, 2)
       ].join("\n")
     }],
-    tools: [answerTool]
+    tools: [responseTool]
   };
   return {
     draftId: idFactory(),
     provider: "deepseek",
     model: model.id,
     createdAt: now().toISOString(),
-    querySourceId: input.querySource.sourceId,
+    conversationSourceId: input.conversationSource.sourceId,
     candidateIds,
+    memories,
     context: cloneJson(context) as Readonly<Record<string, unknown>>
   };
 }
 
-function validateAnswer(
+function validateResponse(
   message: AssistantMessage,
-  candidateIds: readonly string[]
-): { readonly answer?: AiQueryAnswer; readonly error?: string } {
+  candidateIds: readonly string[],
+  conversationSourceId: string
+): { readonly response?: AiConversationResponse; readonly error?: string } {
   const toolCalls = message.content.filter((content): content is ToolCall => content.type === "toolCall");
-  const answerCalls = toolCalls.filter((toolCall) => toolCall.name === answerTool.name);
-  if (answerCalls.length !== 1) {
-    return { error: `期望 1 个 ${answerTool.name} 调用，实际收到 ${answerCalls.length} 个` };
+  const responseCalls = toolCalls.filter((toolCall) => toolCall.name === responseTool.name);
+  if (responseCalls.length !== 1) {
+    return { error: `期望 1 个 ${responseTool.name} 调用，实际收到 ${responseCalls.length} 个` };
   }
   try {
-    const parsed = validateToolCall([answerTool], answerCalls[0]!) as AiQueryAnswer;
+    const parsed = validateToolCall([responseTool], responseCalls[0]!) as AiConversationResponse;
     const allowed = new Set(candidateIds);
     const unknown = parsed.references.find(({ id }) => !allowed.has(id));
     if (unknown) return { error: `模型引用了本次候选之外的 ${unknown.kind}：${unknown.id}` };
-    return { answer: { ...parsed, proposedActions: parsed.proposedActions.map(normalizeAction) } };
+    for (const operation of parsed.memoryOperations) {
+      const unknownContentReference = contentReferences(operation.content).find((id) => !allowed.has(id));
+      if (unknownContentReference) return { error: `Memory 提案包含本次候选之外的引用：${unknownContentReference}` };
+    }
+    const invalidUpdate = parsed.memoryOperations.find((operation) => operation.operation === "update" && !allowed.has(operation.path));
+    if (invalidUpdate) return { error: `模型试图更新本次上下文之外的 Memory：${invalidUpdate.path}` };
+    return {
+      response: {
+        ...parsed,
+        memoryOperations: parsed.memoryOperations.map((operation) => ({
+          ...operation,
+          content: appendSourceReference(operation.content, conversationSourceId)
+        })),
+        otherIntents: parsed.otherIntents.map(normalizeAction)
+      }
+    };
   } catch (error) {
     return { error: error instanceof Error ? error.message : "模型返回的结构不符合约定" };
   }
+}
+
+function contentReferences(content: string): readonly string[] {
+  return [...content.matchAll(/\[(?:SOURCE|CREDENTIAL):(.+?)\]/gu)]
+    .map((match) => match[1])
+    .filter((value): value is string => Boolean(value));
+}
+
+function appendSourceReference(content: string, sourceId: string): string {
+  const reference = `[SOURCE:${sourceId}]`;
+  return content.includes(reference) ? content : `${content.trimEnd()}\n\n来源：${reference}`;
 }
 
 function normalizeAction(action: AiActionIntent): AiActionIntent {

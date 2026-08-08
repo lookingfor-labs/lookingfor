@@ -2,21 +2,22 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { randomUUID } from "node:crypto";
 import type { Plugin } from "vite";
 import { z } from "zod";
-import { createDeepSeekAiQueryEngine, type AiQueryEngine } from "@brainbuddy/ai-query";
-import type { AiQueryDraft, AiQueryInput } from "@brainbuddy/domain";
+import { createDeepSeekAiConversationEngine, type AiConversationEngine } from "@brainbuddy/ai-conversation";
+import { DemoMemorySession } from "@brainbuddy/memory-engine/memory";
+import type { AiConversationDraft, AiConversationInput } from "@brainbuddy/domain";
 
 const prepareSchema = z.object({
-  query: z.string().min(1).max(20_000),
-  querySource: z.object({
+  message: z.string().min(1).max(20_000),
+  conversationSource: z.object({
     sourceId: z.string().max(200),
-    kind: z.enum(["write", "query"]),
+    kind: z.enum(["capture", "local_search", "conversation"]),
     protectedContent: z.string().max(20_000),
     credentialIds: z.array(z.string().max(200)).max(100),
     savedAt: z.string().max(100)
   }),
   sources: z.array(z.object({
     sourceId: z.string().max(200),
-    kind: z.enum(["write", "query"]),
+    kind: z.enum(["capture", "local_search", "conversation"]),
     protectedContent: z.string().max(20_000),
     credentialIds: z.array(z.string().max(200)).max(100),
     savedAt: z.string().max(100)
@@ -30,27 +31,33 @@ const prepareSchema = z.object({
   })).max(100)
 });
 
-export function aiQueryMiddleware(options: { readonly apiKey: string; readonly modelId?: string }): Plugin {
-  let engine: AiQueryEngine | undefined;
-  const drafts = new Map<string, AiQueryDraft>();
-  const getEngine = () => engine ??= createDeepSeekAiQueryEngine(options);
+const memoryOperationSchema = z.discriminatedUnion("operation", [
+  z.object({ operation: z.literal("create"), path: z.string(), content: z.string(), reason: z.string() }),
+  z.object({ operation: z.literal("update"), path: z.string(), expectedVersion: z.string(), content: z.string(), reason: z.string() })
+]);
+
+export function aiConversationMiddleware(options: { readonly apiKey: string; readonly modelId?: string }): Plugin {
+  let engine: AiConversationEngine | undefined;
+  const drafts = new Map<string, AiConversationDraft>();
+  const memories = new DemoMemorySession();
+  const getEngine = () => engine ??= createDeepSeekAiConversationEngine(options);
 
   return {
-    name: "brainbuddy-ai-query-dev-server",
+    name: "brainbuddy-ai-conversation-dev-server",
     configureServer(server) {
       server.middlewares.use(async (request, response, next) => {
-        if (request.method !== "POST" || !request.url?.startsWith("/api/ai-query/")) return next();
+        if (request.method !== "POST" || !request.url?.startsWith("/api/ai-conversation/")) return next();
         try {
-          if (request.url === "/api/ai-query/prepare") {
-            const input = prepareSchema.parse(await readJson(request)) as AiQueryInput;
-            const draft = getEngine().prepare(input);
+          if (request.url === "/api/ai-conversation/prepare") {
+            const input = prepareSchema.parse(await readJson(request)) as Omit<AiConversationInput, "memories">;
+            const draft = getEngine().prepare({ ...input, memories: memories.list() });
             drafts.set(draft.draftId, draft);
             return sendJson(response, 200, draft);
           }
-          if (request.url === "/api/ai-query/run") {
+          if (request.url === "/api/ai-conversation/run") {
             const { draftId } = z.object({ draftId: z.string().uuid() }).parse(await readJson(request));
             const draft = drafts.get(draftId);
-            if (!draft) return sendJson(response, 404, { error: "AI query draft was not found or has expired" });
+            if (!draft) return sendJson(response, 404, { error: "AI conversation draft was not found or has expired" });
             drafts.delete(draftId);
             const runId = randomUUID();
             const controller = new AbortController();
@@ -65,6 +72,10 @@ export function aiQueryMiddleware(options: { readonly apiKey: string; readonly m
               onEvent: (event) => response.write(`${JSON.stringify({ runId, event })}\n`)
             });
             return response.end();
+          }
+          if (request.url === "/api/ai-conversation/apply-memory") {
+            const { operation } = z.object({ operation: memoryOperationSchema }).parse(await readJson(request));
+            return sendJson(response, 200, memories.apply(operation));
           }
           return sendJson(response, 404, { error: "Not found" });
         } catch (error) {

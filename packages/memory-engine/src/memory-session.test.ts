@@ -47,9 +47,9 @@ describe("DemoSourceSession", () => {
   it("links one credential to every source where it is observed", () => {
     const session = new DemoSourceSession();
     const first = session.save(safePlan, "第一条原文");
-    const second = session.save(safePlan, "第二条原文", "query");
+    const second = session.save(safePlan, "第二条原文", "local_search");
 
-    expect(second.kind).toBe("query");
+    expect(second.kind).toBe("local_search");
     expect(session.searchOffline("550e8400").credentials[0]?.sourceIds).toEqual([
       first.sourceId,
       second.sourceId

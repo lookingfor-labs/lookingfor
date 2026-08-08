@@ -11,7 +11,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@brainbuddy/ai-query": "*",
+    "@brainbuddy/ai-conversation": "*",
     "@brainbuddy/domain": "*",
     "@brainbuddy/memory-engine": "*",
     "@brainbuddy/privacy-engine": "*",

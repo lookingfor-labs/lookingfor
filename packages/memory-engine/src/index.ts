@@ -25,7 +25,7 @@ export class DemoSourceSession {
     this.#now = options.now ?? (() => new Date());
   }
 
-  save(plan: ProtectionPlan, originalContent: string, kind: SourceSubmissionKind = "write"): DemoSaveReceipt {
+  save(plan: ProtectionPlan, originalContent: string, kind: SourceSubmissionKind = "capture"): DemoSaveReceipt {
     const initialPreview = toProtectionPreview(plan);
     if (!initialPreview.readyToSave) {
       throw new Error("Protection checks must pass before saving");

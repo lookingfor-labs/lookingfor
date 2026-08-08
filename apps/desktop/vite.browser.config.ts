@@ -2,7 +2,7 @@ import { fileURLToPath } from "node:url";
 import react from "@vitejs/plugin-react";
 import { config as loadDotEnv } from "dotenv";
 import { defineConfig } from "vite";
-import { aiQueryMiddleware } from "./src/dev/ai-query-middleware";
+import { aiConversationMiddleware } from "./src/dev/ai-conversation-middleware";
 
 const desktopRoot = fileURLToPath(new URL(".", import.meta.url));
 loadDotEnv({ path: fileURLToPath(new URL("../../.env", import.meta.url)), quiet: true });
@@ -20,7 +20,7 @@ export default defineConfig({
     }
   },
   plugins: [
-    aiQueryMiddleware({
+    aiConversationMiddleware({
       apiKey: process.env.SECRET_DEEPSEEK_API_KEY ?? "",
       ...(process.env.SECRET_DEEPSEEK_MODEL ? { modelId: process.env.SECRET_DEEPSEEK_MODEL } : {})
     }),

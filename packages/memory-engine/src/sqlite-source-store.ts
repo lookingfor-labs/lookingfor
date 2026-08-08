@@ -42,7 +42,7 @@ export class SqliteSourceStore {
     this.#migrate();
   }
 
-  save(plan: ProtectionPlan, originalContent: string, kind: SourceSubmissionKind = "write"): DemoSaveReceipt {
+  save(plan: ProtectionPlan, originalContent: string, kind: SourceSubmissionKind = "capture"): DemoSaveReceipt {
     const initialPreview = toProtectionPreview(plan);
     if (!initialPreview.readyToSave) throw new Error("Protection checks must pass before saving");
 
@@ -215,7 +215,7 @@ export class SqliteSourceStore {
     this.#database.exec(`
       CREATE TABLE IF NOT EXISTS sources (
         source_id TEXT PRIMARY KEY,
-        submission_kind TEXT NOT NULL CHECK (submission_kind IN ('write', 'query')),
+        submission_kind TEXT NOT NULL CHECK (submission_kind IN ('capture', 'local_search', 'conversation')),
         protected_content TEXT NOT NULL,
         original_ciphertext TEXT NOT NULL,
         original_iv TEXT NOT NULL,
@@ -237,9 +237,53 @@ export class SqliteSourceStore {
         source_id TEXT NOT NULL REFERENCES sources(source_id) ON DELETE CASCADE,
         PRIMARY KEY (credential_id, source_id)
       );
+    `);
+    this.#migrateLegacySourceKinds();
+    this.#database.exec(`
       CREATE INDEX IF NOT EXISTS source_saved_at ON sources(saved_at DESC);
       CREATE INDEX IF NOT EXISTS credential_source_source ON credential_sources(source_id);
     `);
+  }
+
+  #migrateLegacySourceKinds(): void {
+    const table = this.#database.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'sources'")
+      .get() as { sql?: unknown } | undefined;
+    if (!String(table?.sql ?? "").includes("'write'")) return;
+    this.#database.exec("PRAGMA foreign_keys = OFF; BEGIN IMMEDIATE;");
+    try {
+      this.#database.exec(`
+        ALTER TABLE credential_sources RENAME TO credential_sources_legacy;
+        ALTER TABLE sources RENAME TO sources_legacy;
+        CREATE TABLE sources (
+          source_id TEXT PRIMARY KEY,
+          submission_kind TEXT NOT NULL CHECK (submission_kind IN ('capture', 'local_search', 'conversation')),
+          protected_content TEXT NOT NULL,
+          original_ciphertext TEXT NOT NULL,
+          original_iv TEXT NOT NULL,
+          original_tag TEXT NOT NULL,
+          saved_at TEXT NOT NULL
+        );
+        INSERT INTO sources
+        SELECT source_id,
+          CASE submission_kind WHEN 'write' THEN 'capture' WHEN 'query' THEN 'local_search' ELSE submission_kind END,
+          protected_content, original_ciphertext, original_iv, original_tag, saved_at
+        FROM sources_legacy;
+        CREATE TABLE credential_sources (
+          credential_id TEXT NOT NULL REFERENCES credentials(credential_id) ON DELETE CASCADE,
+          source_id TEXT NOT NULL REFERENCES sources(source_id) ON DELETE CASCADE,
+          PRIMARY KEY (credential_id, source_id)
+        );
+        INSERT INTO credential_sources SELECT credential_id, source_id FROM credential_sources_legacy;
+        DROP TABLE credential_sources_legacy;
+        DROP TABLE sources_legacy;
+        COMMIT;
+      `);
+    } catch (error) {
+      this.#database.exec("ROLLBACK;");
+      throw error;
+    } finally {
+      this.#database.exec("PRAGMA foreign_keys = ON;");
+    }
   }
 }
 
@@ -283,6 +327,6 @@ function escapeLike(value: string): string {
 }
 
 function asSourceKind(value: unknown): SourceSubmissionKind {
-  if (value === "write" || value === "query") return value;
+  if (value === "capture" || value === "local_search" || value === "conversation") return value;
   throw new Error("Stored source kind is invalid");
 }

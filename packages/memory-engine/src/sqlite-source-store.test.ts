@@ -39,7 +39,7 @@ describe("SqliteSourceStore", () => {
     directories.splice(0).forEach((directory) => rmSync(directory, { recursive: true, force: true }));
   });
 
-  it("persists encrypted write and query sources with searchable credential links", () => {
+  it("persists encrypted sources from each submission channel with searchable credential links", () => {
     const directory = mkdtempSync(join(tmpdir(), "brainbuddy-source-store-"));
     directories.push(directory);
     const databasePath = join(directory, "brainbuddy.sqlite");
@@ -52,19 +52,19 @@ describe("SqliteSourceStore", () => {
     };
     const store = new SqliteSourceStore(options);
 
-    const writeReceipt = store.save(plan(), `原始写入 ${secret}`, "write");
-    const queryReceipt = store.save(plan(secondCredentialId), `原始查询 ${secret}`, "query");
+    const captureReceipt = store.save(plan(), `原始写入 ${secret}`, "capture");
+    const conversationReceipt = store.save(plan(secondCredentialId), `原始对话 ${secret}`, "conversation");
     const result = store.searchOffline("550e8400");
 
-    expect(writeReceipt.kind).toBe("write");
-    expect(queryReceipt.kind).toBe("query");
-    expect(queryReceipt.credentialIds).toEqual([firstCredentialId]);
-    expect(result.credentials[0]?.sourceIds).toEqual([writeReceipt.sourceId, queryReceipt.sourceId]);
+    expect(captureReceipt.kind).toBe("capture");
+    expect(conversationReceipt.kind).toBe("conversation");
+    expect(conversationReceipt.credentialIds).toEqual([firstCredentialId]);
+    expect(result.credentials[0]?.sourceIds).toEqual([captureReceipt.sourceId, conversationReceipt.sourceId]);
     expect(store.searchOffline("Figma").sources).toHaveLength(2);
     expect(store.searchOffline("Figma").credentials).toHaveLength(1);
-    expect(store.revealSource(queryReceipt.sourceId)).toMatchObject({
-      kind: "query",
-      originalContent: `原始查询 ${secret}`
+    expect(store.revealSource(conversationReceipt.sourceId)).toMatchObject({
+      kind: "conversation",
+      originalContent: `原始对话 ${secret}`
     });
     store.close();
 
@@ -77,5 +77,46 @@ describe("SqliteSourceStore", () => {
     expect(reopened.searchOffline("Figma").sources).toHaveLength(2);
     expect(reopened.searchOffline(firstCredentialId).credentials).toHaveLength(1);
     reopened.close();
+  });
+
+  it("migrates legacy write and query source kinds to submission channels", () => {
+    const directory = mkdtempSync(join(tmpdir(), "brainbuddy-source-migration-"));
+    directories.push(directory);
+    const databasePath = join(directory, "brainbuddy.sqlite");
+    const database = new DatabaseSync(databasePath);
+    database.exec(`
+      CREATE TABLE sources (
+        source_id TEXT PRIMARY KEY,
+        submission_kind TEXT NOT NULL CHECK (submission_kind IN ('write', 'query')),
+        protected_content TEXT NOT NULL,
+        original_ciphertext TEXT NOT NULL,
+        original_iv TEXT NOT NULL,
+        original_tag TEXT NOT NULL,
+        saved_at TEXT NOT NULL
+      );
+      CREATE TABLE credentials (
+        credential_id TEXT PRIMARY KEY,
+        entity_type TEXT NOT NULL,
+        masked_value TEXT NOT NULL,
+        secret_hash TEXT NOT NULL UNIQUE,
+        secret_ciphertext TEXT NOT NULL,
+        secret_iv TEXT NOT NULL,
+        secret_tag TEXT NOT NULL,
+        saved_at TEXT NOT NULL
+      );
+      CREATE TABLE credential_sources (
+        credential_id TEXT NOT NULL REFERENCES credentials(credential_id) ON DELETE CASCADE,
+        source_id TEXT NOT NULL REFERENCES sources(source_id) ON DELETE CASCADE,
+        PRIMARY KEY (credential_id, source_id)
+      );
+      INSERT INTO sources VALUES
+        ('SOURCE_OLD_WRITE', 'write', '旧写入', '', '', '', '2026-08-07T00:00:00.000Z'),
+        ('SOURCE_OLD_QUERY', 'query', '旧查询', '', '', '', '2026-08-07T00:01:00.000Z');
+    `);
+    database.close();
+
+    const store = new SqliteSourceStore({ databasePath, encryptionKey: Buffer.alloc(32, 7) });
+    expect(store.searchOffline("").sources.map(({ kind }) => kind)).toEqual(["local_search", "capture"]);
+    store.close();
   });
 });

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AiQueryEvent, AiQueryInput } from "@brainbuddy/domain";
-import { createDeepSeekAiQueryEngine } from "./index";
+import type { AiConversationEvent, AiConversationInput } from "@brainbuddy/domain";
+import { createDeepSeekAiConversationEngine } from "./index";
 
 const originalFetch = globalThis.fetch;
 
@@ -9,50 +9,65 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("DeepSeekAiQueryEngine", () => {
+describe("DeepSeekAiConversationEngine", () => {
   it("captures the provider payload and validates answer action intentions", async () => {
     globalThis.fetch = vi.fn(async () => deepSeekToolResponse({
-      answer: "找到了对应的设计工具凭据。",
+      message: "找到了对应的设计工具凭据。",
       references: [{ kind: "credential", id: "credential-1" }],
-      proposedActions: [{
-        kind: "file_read",
+      memoryOperations: [{
+        operation: "update",
         path: "memories/design-tools.md",
-        reason: "核对本地工具说明"
+        expectedVersion: "a".repeat(64),
+        content: "补充 Figma 说明",
+        reason: "更新设计工具记忆"
+      }],
+      otherIntents: [{
+        kind: "file_read",
+        path: "attachments/design-notes.md",
+        reason: "核对外部附件"
       }]
     })) as typeof fetch;
-    const engine = createDeepSeekAiQueryEngine({
+    const engine = createDeepSeekAiConversationEngine({
       apiKey: "test-key",
       now: () => new Date("2026-08-08T08:00:00.000Z"),
       idFactory: () => "550e8400-e29b-41d4-a716-446655440000"
     });
-    const draft = engine.prepare(queryInput());
-    const events: AiQueryEvent[] = [];
+    const draft = engine.prepare(conversationInput());
+    const events: AiConversationEvent[] = [];
 
     await engine.run(draft, { onEvent: (event) => events.push(event) });
 
-    expect(draft.context).toMatchObject({ systemPrompt: expect.stringContaining("proposedActions") });
+    expect(draft.context).toMatchObject({ systemPrompt: expect.stringContaining("memoryOperations") });
+    expect(draft.candidateIds).toContain("SOURCE_QUERY");
+    expect((draft.context as { messages: { content: string }[] }).messages[0]?.content).toContain('"conversationSource"');
     expect(events.some(({ type }) => type === "provider_payload")).toBe(true);
     const completed = events.find((event) => event.type === "completed");
     expect(completed).toMatchObject({
       type: "completed",
-      answer: {
-        answer: "找到了对应的设计工具凭据。",
+      response: {
+        message: "找到了对应的设计工具凭据。",
         references: [{ kind: "credential", id: "credential-1" }],
-        proposedActions: [{ kind: "file_read", path: "memories/design-tools.md" }]
+        memoryOperations: [{
+          operation: "update",
+          path: "memories/design-tools.md",
+          content: expect.stringContaining("[SOURCE:SOURCE_QUERY]")
+        }],
+        otherIntents: [{ kind: "file_read", path: "attachments/design-notes.md" }]
       }
     });
   });
 
   it("keeps the raw reply but rejects references outside the prepared candidate set", async () => {
     globalThis.fetch = vi.fn(async () => deepSeekToolResponse({
-      answer: "引用一个不存在的凭据。",
+      message: "引用一个不存在的凭据。",
       references: [{ kind: "credential", id: "credential-outside-draft" }],
-      proposedActions: []
+      memoryOperations: [],
+      otherIntents: []
     })) as typeof fetch;
-    const engine = createDeepSeekAiQueryEngine({ apiKey: "test-key" });
-    const events: AiQueryEvent[] = [];
+    const engine = createDeepSeekAiConversationEngine({ apiKey: "test-key" });
+    const events: AiConversationEvent[] = [];
 
-    await engine.run(engine.prepare(queryInput()), { onEvent: (event) => events.push(event) });
+    await engine.run(engine.prepare(conversationInput()), { onEvent: (event) => events.push(event) });
 
     const completed = events.find((event) => event.type === "completed");
     expect(completed).toMatchObject({
@@ -61,21 +76,44 @@ describe("DeepSeekAiQueryEngine", () => {
     });
     expect(completed?.type === "completed" ? completed.rawMessage : undefined).toBeDefined();
   });
+
+  it("rejects unknown references embedded in proposed Memory content", async () => {
+    globalThis.fetch = vi.fn(async () => deepSeekToolResponse({
+      message: "准备记录。",
+      references: [],
+      memoryOperations: [{
+        operation: "create",
+        path: "memories/preferences.md",
+        content: "未知来源 [SOURCE:SOURCE_INVENTED]",
+        reason: "测试无效引用"
+      }],
+      otherIntents: []
+    })) as typeof fetch;
+    const engine = createDeepSeekAiConversationEngine({ apiKey: "test-key" });
+    const events: AiConversationEvent[] = [];
+
+    await engine.run(engine.prepare(conversationInput()), { onEvent: (event) => events.push(event) });
+
+    expect(events.find((event) => event.type === "completed")).toMatchObject({
+      type: "completed",
+      validationError: expect.stringContaining("SOURCE_INVENTED")
+    });
+  });
 });
 
-function queryInput(): AiQueryInput {
+function conversationInput(): AiConversationInput {
   return {
-    query: "找一下之前做界面原型时常用的网站账号。",
-    querySource: {
+    message: "找一下之前做界面原型时常用的网站账号。",
+    conversationSource: {
       sourceId: "SOURCE_QUERY",
-      kind: "query",
+      kind: "conversation",
       protectedContent: "找一下之前做界面原型时常用的网站账号。\n\n来源：[SOURCE:SOURCE_QUERY]",
       credentialIds: [],
       savedAt: "2026-08-08T08:00:00.000Z"
     },
     sources: [{
       sourceId: "SOURCE_FIGMA",
-      kind: "write",
+      kind: "capture",
       protectedContent: "Figma 登录凭据是 [CREDENTIAL:credential-1]",
       credentialIds: ["credential-1"],
       savedAt: "2026-08-07T08:00:00.000Z"
@@ -86,6 +124,14 @@ function queryInput(): AiQueryInput {
       maskedValue: "••••••••",
       sourceIds: ["SOURCE_FIGMA"],
       savedAt: "2026-08-07T08:00:00.000Z"
+    }],
+    memories: [{
+      path: "memories/design-tools.md",
+      content: "Figma 凭据：[CREDENTIAL:credential-1]",
+      sourceIds: ["SOURCE_FIGMA"],
+      credentialIds: ["credential-1"],
+      updatedAt: "2026-08-07T08:00:00.000Z",
+      version: "a".repeat(64)
     }]
   };
 }
@@ -105,7 +151,7 @@ function deepSeekToolResponse(arguments_: unknown): Response {
             index: 0,
             id: "call-answer",
             type: "function",
-            function: { name: "brainbuddy_answer", arguments: JSON.stringify(arguments_) }
+            function: { name: "brainbuddy_respond", arguments: JSON.stringify(arguments_) }
           }]
         },
         finish_reason: null
