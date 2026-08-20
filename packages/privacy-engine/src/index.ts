@@ -11,6 +11,7 @@ import {
   PrivateKeyRecognizer
 } from "./recognizers";
 import type { Recognizer } from "./types";
+import { findCredentialReferences } from "./credential-id";
 
 export * from "./recognizers";
 export * from "./credential-id";
@@ -41,7 +42,9 @@ export class PrivacyEngine {
   }
 
   analyze(text: string): PrivacyAnalysis {
-    const entities = resolveOverlaps(this.recognizers.flatMap((recognizer) => recognizer.recognize(text)));
+    const references = findCredentialReferences(text);
+    const entities = resolveOverlaps(this.recognizers.flatMap((recognizer) => recognizer.recognize(text)))
+      .filter((entity) => !references.some((reference) => entity.start >= reference.start && entity.end <= reference.end));
     return {
       inputLength: text.length,
       entities,

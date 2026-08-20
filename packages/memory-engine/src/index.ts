@@ -8,7 +8,7 @@ import type {
   ProtectionPlan,
   SourceSubmissionKind
 } from "@brainbuddy/domain";
-import { toProtectionPreview } from "@brainbuddy/privacy-engine";
+import { findCredentialReferences, toProtectionPreview } from "@brainbuddy/privacy-engine";
 
 export interface DemoSourceSessionOptions {
   readonly now?: () => Date;
@@ -37,10 +37,6 @@ export class DemoSourceSession {
       throw new Error("A credential id cannot identify different secrets");
     }
 
-    this.#sequence += 1;
-    const suffix = String(this.#sequence).padStart(3, "0");
-    const sourceId = `SOURCE_DEMO_${suffix}`;
-    const savedAt = this.#now().toISOString();
     const resolvedCredentials = plan.credentialDrafts.map((credential) => {
       const existing = [...this.#credentials.values()].find(({ draft }) => draft.secret === credential.secret);
       return existing
@@ -51,17 +47,31 @@ export class DemoSourceSession {
       const resolved = resolvedCredentials[index];
       return resolved ? content.replaceAll(credential.ref, resolved.ref) : content;
     }, plan.protectedContent);
+    const credentialIds = [...new Set(findCredentialReferences(protectedContent).map(({ credentialId }) => credentialId))];
+    const availableCredentialIds = new Set([
+      ...this.#credentials.keys(),
+      ...resolvedCredentials.map(({ credentialId }) => credentialId)
+    ]);
+    const unknownCredentialId = credentialIds.find((credentialId) => !availableCredentialIds.has(credentialId));
+    if (unknownCredentialId) throw new Error(`Credential reference does not exist: ${unknownCredentialId}`);
+
+    this.#sequence += 1;
+    const suffix = String(this.#sequence).padStart(3, "0");
+    const sourceId = `SOURCE_DEMO_${suffix}`;
+    const savedAt = this.#now().toISOString();
     const storedPlan = {
       ...plan,
       protectedContent: `${protectedContent}\n\n来源：[SOURCE:${sourceId}]`,
       credentialDrafts: resolvedCredentials
     };
     const preview = toProtectionPreview(storedPlan);
-    const credentialIds = resolvedCredentials.map((credential) => credential.credentialId);
     resolvedCredentials.forEach((credential) => {
       const existing = this.#credentials.get(credential.credentialId);
-      if (existing) existing.sourceIds.push(sourceId);
-      else this.#credentials.set(credential.credentialId, { draft: credential, sourceIds: [sourceId], savedAt });
+      if (!existing) this.#credentials.set(credential.credentialId, { draft: credential, sourceIds: [], savedAt });
+    });
+    credentialIds.forEach((credentialId) => {
+      const credential = this.#credentials.get(credentialId)!;
+      if (!credential.sourceIds.includes(sourceId)) credential.sourceIds.push(sourceId);
     });
     this.#sources.set(sourceId, { sourceId, kind, originalContent, savedAt });
     this.#summaries.set(sourceId, { sourceId, kind, protectedContent: storedPlan.protectedContent, credentialIds, savedAt });

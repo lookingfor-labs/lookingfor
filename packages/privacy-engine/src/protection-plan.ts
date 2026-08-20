@@ -6,6 +6,7 @@ import type {
   ProtectionPreview,
   SafetyCheck
 } from "@brainbuddy/domain";
+import { isCredentialId } from "./credential-id";
 
 export interface BuildProtectionPlanInput {
   readonly text: string;
@@ -100,10 +101,6 @@ function validateEntity(text: string, entity: DetectedEntity, cursor: number): v
 
 function protectedValue(entity: DetectedEntity, policy: ProtectionDecision["policy"], token: string): string {
   return policy === "move_to_vault" ? token : entity.text;
-}
-
-function isCredentialId(value: string): boolean {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(value);
 }
 
 function buildSafetyChecks(

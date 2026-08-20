@@ -56,6 +56,32 @@ describe("DemoSourceSession", () => {
     ]);
   });
 
+  it("links an existing Credential Reference without creating another credential", () => {
+    const session = new DemoSourceSession();
+    const first = session.save(safePlan, "原始凭据");
+    const referenced = session.save({
+      protectedContent: `密码是 [CREDENTIAL:${first.credentialIds[0]}]`,
+      credentialDrafts: [],
+      safetyChecks: safePlan.safetyChecks
+    }, `密码是 [CREDENTIAL:${first.credentialIds[0]}]`, "conversation");
+
+    expect(referenced.credentialIds).toEqual(first.credentialIds);
+    expect(session.searchOffline(first.credentialIds[0]!).credentials).toHaveLength(1);
+    expect(session.searchOffline(first.credentialIds[0]!).credentials[0]?.sourceIds).toEqual([
+      first.sourceId,
+      referenced.sourceId
+    ]);
+  });
+
+  it("rejects an unknown Credential Reference", () => {
+    const session = new DemoSourceSession();
+    expect(() => session.save({
+      protectedContent: "密码是 [CREDENTIAL:00e5dcad-aad5-4fe2-a520-3ca35e0d03a8]",
+      credentialDrafts: [],
+      safetyChecks: safePlan.safetyChecks
+    }, "原始内容")).toThrow("Credential reference does not exist");
+  });
+
   it("rejects a plan that fails a safety check", () => {
     const session = new DemoSourceSession();
     expect(() => session.save({

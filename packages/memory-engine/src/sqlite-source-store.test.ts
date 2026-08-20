@@ -79,6 +79,35 @@ describe("SqliteSourceStore", () => {
     reopened.close();
   });
 
+  it("links an existing Credential Reference and rejects unknown references", () => {
+    const directory = mkdtempSync(join(tmpdir(), "brainbuddy-source-reference-"));
+    directories.push(directory);
+    const sourceIds = ["SOURCE_FIRST", "SOURCE_REFERENCE", "SOURCE_UNKNOWN"];
+    const store = new SqliteSourceStore({
+      databasePath: join(directory, "brainbuddy.sqlite"),
+      encryptionKey: Buffer.alloc(32, 7),
+      sourceIdFactory: () => sourceIds.shift()!
+    });
+    const first = store.save(plan(), "原始凭据");
+    const referencePlan: ProtectionPlan = {
+      protectedContent: `密码是 [CREDENTIAL:${firstCredentialId}]`,
+      credentialDrafts: [],
+      safetyChecks: plan().safetyChecks
+    };
+
+    const referenced = store.save(referencePlan, referencePlan.protectedContent, "conversation");
+    expect(referenced.credentialIds).toEqual([firstCredentialId]);
+    expect(store.searchOffline(firstCredentialId).credentials[0]?.sourceIds).toEqual([
+      first.sourceId,
+      referenced.sourceId
+    ]);
+    expect(() => store.save({
+      ...referencePlan,
+      protectedContent: "密码是 [CREDENTIAL:00e5dcad-aad5-4fe2-a520-3ca35e0d03a8]"
+    }, "未知引用")).toThrow("Credential reference does not exist");
+    store.close();
+  });
+
   it("migrates legacy write and query source kinds to submission channels", () => {
     const directory = mkdtempSync(join(tmpdir(), "brainbuddy-source-migration-"));
     directories.push(directory);

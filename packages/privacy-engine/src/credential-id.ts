@@ -2,10 +2,31 @@ export interface RandomValuesSource {
   getRandomValues(array: Uint8Array): Uint8Array;
 }
 
+export interface CredentialReference {
+  readonly credentialId: string;
+  readonly ref: string;
+  readonly start: number;
+  readonly end: number;
+}
+
 export function createCredentialId(source: RandomValuesSource): string {
   const bytes = source.getRandomValues(new Uint8Array(16));
   bytes[6] = (bytes[6]! & 0x0f) | 0x40;
   bytes[8] = (bytes[8]! & 0x3f) | 0x80;
   const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+export function isCredentialId(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(value);
+}
+
+export function findCredentialReferences(text: string): readonly CredentialReference[] {
+  const pattern = /\[CREDENTIAL:([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\]/giu;
+  return [...text.matchAll(pattern)].map((match) => ({
+    credentialId: match[1]!,
+    ref: match[0],
+    start: match.index,
+    end: match.index + match[0].length
+  }));
 }

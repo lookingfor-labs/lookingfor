@@ -38,6 +38,8 @@ describe("DeepSeekAiConversationEngine", () => {
     await engine.run(draft, { onEvent: (event) => events.push(event) });
 
     expect(draft.context).toMatchObject({ systemPrompt: expect.stringContaining("memoryOperations") });
+    expect(draft.context).toMatchObject({ systemPrompt: expect.stringContaining("最终 message 禁止提出任何问题") });
+    expect(draft.context).toMatchObject({ systemPrompt: expect.stringContaining("Credential Source Link 已在调用模型前由本地系统保存") });
     expect(draft.candidateIds).toContain("SOURCE_QUERY");
     expect((draft.context as { messages: { content: string }[] }).messages[0]?.content).toContain('"conversationSource"');
     expect(events.some(({ type }) => type === "provider_payload")).toBe(true);

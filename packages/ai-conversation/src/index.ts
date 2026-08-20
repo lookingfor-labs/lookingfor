@@ -81,7 +81,10 @@ const systemPrompt = `你是 BrainBuddy 的对话模型。用户可能提问、�
 6. Memory 内容如果来自某条 Source，必须保留 [SOURCE:<Source ID>]；涉及凭据时只保留 [CREDENTIAL:<Credential ID>]，不得写入原文。
 7. memoryOperations 只是提案，必须由用户确认后才能应用。
 8. 任意工具或非 Memory 文件意图放入 otherIntents，本次调用不会执行。
-9. 只能引用本次上下文中出现的 Source ID、Credential ID 或 Memory Path。`;
+9. 只能引用本次上下文中出现的 Source ID、Credential ID 或 Memory Path。
+10. 本次是单次调用，不存在可继续回复的当前会话。最终 message 禁止提出任何问题、禁止邀请用户继续回复，也不要询问用户是否需要创建或更新 Memory。
+11. 用户陈述的账户与凭据关联、稳定偏好或其他可复用事实适合长期记忆时，必须直接放入 memoryOperations 供界面确认；不适合时明确本轮不提出 Memory 操作。
+12. conversationSource 及其 Credential Source Link 已在调用模型前由本地系统保存。只能把它描述为已完成的事实，不得声称 AI 将要保存或建立关联。`;
 
 export interface DeepSeekAiConversationEngineOptions {
   readonly apiKey: string;

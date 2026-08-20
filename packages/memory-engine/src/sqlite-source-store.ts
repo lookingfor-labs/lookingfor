@@ -11,7 +11,7 @@ import type {
   ProtectionPlan,
   SourceSubmissionKind
 } from "@brainbuddy/domain";
-import { toProtectionPreview } from "@brainbuddy/privacy-engine";
+import { findCredentialReferences, toProtectionPreview } from "@brainbuddy/privacy-engine";
 
 interface SqliteSourceStoreOptions {
   readonly databasePath: string;
@@ -57,16 +57,19 @@ export class SqliteSourceStore {
         replaceCredentialReferences(plan.protectedContent, plan.credentialDrafts, resolvedCredentials),
         sourceId
       );
+      const credentialIds = [...new Set(findCredentialReferences(protectedContent).map(({ credentialId }) => credentialId))];
+      const unknownCredentialId = credentialIds.find((credentialId) => !this.#credentialExists(credentialId));
+      if (unknownCredentialId) throw new Error(`Credential reference does not exist: ${unknownCredentialId}`);
       this.#database.prepare(`
         INSERT INTO sources (
           source_id, submission_kind, protected_content, original_ciphertext, original_iv, original_tag, saved_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?)
       `).run(sourceId, kind, protectedContent, encryptedSource.ciphertext, encryptedSource.iv, encryptedSource.tag, savedAt);
 
-      for (const credential of resolvedCredentials) {
+      for (const credentialId of credentialIds) {
         this.#database.prepare(`
           INSERT OR IGNORE INTO credential_sources (credential_id, source_id) VALUES (?, ?)
-        `).run(credential.credentialId, sourceId);
+        `).run(credentialId, sourceId);
       }
       this.#database.exec("COMMIT");
 
@@ -78,7 +81,7 @@ export class SqliteSourceStore {
       return {
         sourceId,
         kind,
-        credentialIds: resolvedCredentials.map((credential) => credential.credentialId),
+        credentialIds,
         savedAt,
         storage: "sqlite",
         preview: toProtectionPreview(normalizedPlan)
@@ -181,6 +184,10 @@ export class SqliteSourceStore {
       );
     }
     return draft;
+  }
+
+  #credentialExists(credentialId: string): boolean {
+    return Boolean(this.#database.prepare("SELECT 1 FROM credentials WHERE credential_id = ?").get(credentialId));
   }
 
   #sourceSummary(row: Record<string, unknown>): DemoSourceSummary {

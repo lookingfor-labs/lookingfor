@@ -118,6 +118,13 @@ describe("PrivacyEngine", () => {
     expect(result.entities[0]?.type).toBe("api_key");
     expect(result).not.toHaveProperty("protectedPreview");
   });
+
+  it("treats an existing Credential Reference as opaque instead of extracting it again", () => {
+    const credentialId = "00e5dcad-aad5-4fe2-a520-3ca35e0d03a8";
+    const result = new PrivacyEngine().analyze(`密码是 [CREDENTIAL:${credentialId}]`);
+
+    expect(result.entities).toEqual([]);
+  });
 });
 
 describe("buildProtectionPlan", () => {
