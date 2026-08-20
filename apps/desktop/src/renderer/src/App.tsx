@@ -6,7 +6,6 @@ import type {
   AiConversationResponse,
   DemoCredentialSummary,
   DemoOfflineSearchResult,
-  DemoQueryResult,
   DemoSaveReceipt,
   DemoSourceSummary,
   DemoSourceReveal,
@@ -89,7 +88,6 @@ export function App(): JSX.Element {
   const [isSaving, setIsSaving] = useState(false);
   const [sources, setSources] = useState<readonly DemoSourceSummary[]>([]);
   const [credentials, setCredentials] = useState<readonly DemoCredentialSummary[]>([]);
-  const [queryReceipt, setQueryReceipt] = useState<DemoSaveReceipt>();
   const [searchQuery, setSearchQuery] = useState("");
   const [revealedSource, setRevealedSource] = useState<DemoSourceReveal>();
   const [isLoadingRecords, setIsLoadingRecords] = useState(false);
@@ -178,19 +176,7 @@ export function App(): JSX.Element {
   }
 
   async function submitQuery(): Promise<void> {
-    if (!searchQuery.trim()) return loadSources("");
-    setIsLoadingRecords(true);
-    setError(undefined);
-    try {
-      const result = await submitDemoQuery(searchQuery);
-      setQueryReceipt(result.receipt);
-      setSources(result.sources);
-      setCredentials(result.credentials);
-    } catch {
-      setError("查询提交失败，未生成 Source 记录。");
-    } finally {
-      setIsLoadingRecords(false);
-    }
+    await loadSources(searchQuery);
   }
 
   async function revealSource(sourceId: string): Promise<void> {
@@ -306,7 +292,7 @@ export function App(): JSX.Element {
       </>}
 
       {activePage === "save" && <SavePage sources={sources} receipt={receipt} isPersistent={usesPersistentDatabase} isLoading={isLoadingRecords} revealedSource={revealedSource} onReveal={revealSource} onCloseReveal={() => setRevealedSource(undefined)} onGoProtect={() => navigate("protect")} />}
-      {activePage === "search" && <SearchPage query={searchQuery} sources={sources} credentials={credentials} queryReceipt={queryReceipt} isLoading={isLoadingRecords} revealedSource={revealedSource} onQueryChange={setSearchQuery} onSearch={() => void submitQuery()} onReveal={revealSource} onCloseReveal={() => setRevealedSource(undefined)} />}
+      {activePage === "search" && <SearchPage query={searchQuery} sources={sources} credentials={credentials} isLoading={isLoadingRecords} revealedSource={revealedSource} onQueryChange={setSearchQuery} onSearch={() => void submitQuery()} onReveal={revealSource} onCloseReveal={() => setRevealedSource(undefined)} />}
       {activePage === "ai" && <AiConversationPage />}
       {activePage === "agent" && <AgentPreviewPage />}
       {activePage !== "protect" && error && <p className="error" role="alert">{error}</p>}
@@ -336,11 +322,10 @@ function SavePage({ sources, receipt, isPersistent, isLoading, revealedSource, o
   </>;
 }
 
-function SearchPage({ query, sources, credentials, queryReceipt, isLoading, revealedSource, onQueryChange, onSearch, onReveal, onCloseReveal }: {
+function SearchPage({ query, sources, credentials, isLoading, revealedSource, onQueryChange, onSearch, onReveal, onCloseReveal }: {
   readonly query: string;
   readonly sources: readonly DemoSourceSummary[];
   readonly credentials: readonly DemoCredentialSummary[];
-  readonly queryReceipt: DemoSaveReceipt | undefined;
   readonly isLoading: boolean;
   readonly revealedSource: DemoSourceReveal | undefined;
   readonly onQueryChange: (value: string) => void;
@@ -349,13 +334,12 @@ function SearchPage({ query, sources, credentials, queryReceipt, isLoading, reve
   readonly onCloseReveal: () => void;
 }): JSX.Element {
   return <>
-    <PageIntro number="03" kicker="LOCAL SEARCH · OFFLINE" title="本地查询" copy="每次点击查询都会先保存一条本地查询 Source，再离线搜索 Source 与凭据记录。原始输入仍须手动打开。" />
+    <PageIntro number="03" kicker="LOCAL SEARCH · OFFLINE" title="本地查询" copy="只读搜索本地 Source 与凭据元数据。查询词不会留档，也不会发送给 AI。" />
     <form className="search-box panel" onSubmit={(event) => { event.preventDefault(); onSearch(); }}>
       <input aria-label="本地查询关键词" value={query} onChange={(event) => onQueryChange(event.target.value)} placeholder="输入 Figma、SOURCE_DEMO_001 或凭据 UUID" />
       <button type="submit">{isLoading ? "查询中…" : "离线查询"}</button>
-      <small>未连接 AI · 原始记录不参与索引</small>
+      <small>未连接 AI · 查询词不保存 · 原始记录不参与索引</small>
     </form>
-    {queryReceipt && <div className="prototype-notice"><strong>查询已留档</strong><span>{queryReceipt.sourceId} · {queryReceipt.credentialIds.length} 个凭据关联</span></div>}
     <section className="record-stack search-results">
       <div className="results-heading"><div><p className="section-number">Source 结果</p><h3>{query ? `“${query}”` : "全部 Source"}</h3></div><span>{sources.length} 条</span></div>
       {sources.map((source) => <SourceRecord key={source.sourceId} source={source} onReveal={onReveal} />)}
@@ -711,28 +695,6 @@ async function searchDemoSources(query: string): Promise<DemoOfflineSearchResult
   return (await browserRuntime()).session.searchOffline(query);
 }
 
-async function submitDemoQuery(text: string): Promise<DemoQueryResult> {
-  if (window.brainBuddy) return window.brainBuddy.submitDemoQuery({ text });
-  const runtime = await browserRuntime();
-  const analysis = runtime.engine.analyze(text);
-  const plan = runtime.buildProtectionPlan({
-    text,
-    entities: analysis.entities,
-    decisions: analysis.entities.map(({ start, end, suggestedPolicy: policy }) => ({ start, end, policy })),
-    credentialIdFactory: () => runtime.createCredentialId(crypto)
-  });
-  const receipt = runtime.session.save(plan, text, "local_search");
-  const result = runtime.session.searchOffline(text, receipt.sourceId);
-  const submittedCredentials = runtime.session.searchOffline("").credentials
-    .filter((credential) => receipt.credentialIds.includes(credential.credentialId));
-  return {
-    receipt,
-    sources: result.sources,
-    credentials: [...submittedCredentials, ...result.credentials.filter((credential) =>
-      !receipt.credentialIds.includes(credential.credentialId))]
-  };
-}
-
 async function revealDemoSource(sourceId: string): Promise<DemoSourceReveal> {
   if (window.brainBuddy) return window.brainBuddy.revealDemoSource({ sourceId });
   return (await browserRuntime()).session.revealSource(sourceId);
@@ -873,7 +835,7 @@ function memoryOperationKey(operation: MemoryOperation): string {
 }
 
 function sourceKindLabel(kind: DemoSourceSummary["kind"]): string {
-  return ({ capture: "输入", local_search: "本地查询", conversation: "AI 对话" } as const)[kind];
+  return ({ capture: "输入", local_search: "历史本地查询", conversation: "AI 对话" } as const)[kind];
 }
 
 function actionLabel(kind: AiActionIntent["kind"]): string {

@@ -2,7 +2,6 @@ import { z } from "zod";
 import type {
   DemoSaveReceipt,
   DemoOfflineSearchResult,
-  DemoQueryResult,
   AiConversationDraft,
   AiConversationEvent,
   DemoSourceReveal,
@@ -15,7 +14,6 @@ export const ANALYZE_INPUT_CHANNEL = "privacy:analyze-input";
 export const PREVIEW_PROTECTION_CHANNEL = "privacy:preview-protection";
 export const SAVE_DEMO_CANDIDATE_CHANNEL = "memory:save-demo-candidate";
 export const SEARCH_DEMO_SOURCES_CHANNEL = "source:search-demo-sources";
-export const SUBMIT_DEMO_QUERY_CHANNEL = "source:submit-demo-query";
 export const REVEAL_DEMO_SOURCE_CHANNEL = "memory:reveal-demo-source";
 export const PREPARE_AI_CONVERSATION_CHANNEL = "ai:prepare-conversation";
 export const START_AI_CONVERSATION_CHANNEL = "ai:start-conversation";
@@ -45,10 +43,6 @@ export const SearchDemoSourcesRequestSchema = z.object({
   query: z.string().max(2_000)
 });
 
-export const SubmitDemoQueryRequestSchema = z.object({
-  text: z.string().trim().min(1).max(2_000)
-});
-
 export const RevealDemoSourceRequestSchema = z.object({
   sourceId: z.string().regex(/^SOURCE_(?:DEMO_\d{3,}|[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/iu)
 });
@@ -66,7 +60,6 @@ export const CancelAiConversationRequestSchema = z.object({
 });
 
 export type SearchDemoSourcesRequest = z.infer<typeof SearchDemoSourcesRequestSchema>;
-export type SubmitDemoQueryRequest = z.infer<typeof SubmitDemoQueryRequestSchema>;
 export type RevealDemoSourceRequest = z.infer<typeof RevealDemoSourceRequestSchema>;
 export const MemoryOperationSchema = z.discriminatedUnion("operation", [
   z.object({
@@ -101,7 +94,6 @@ export interface BrainBuddyApi {
   previewProtection(request: ProtectionRequest): Promise<ProtectionPreview>;
   saveDemoCandidate(request: ProtectionRequest): Promise<DemoSaveReceipt>;
   searchDemoSources(request: SearchDemoSourcesRequest): Promise<DemoOfflineSearchResult>;
-  submitDemoQuery(request: SubmitDemoQueryRequest): Promise<DemoQueryResult>;
   revealDemoSource(request: RevealDemoSourceRequest): Promise<DemoSourceReveal>;
   prepareAiConversation(request: PrepareAiConversationRequest): Promise<AiConversationDraft>;
   startAiConversation(request: StartAiConversationRequest): Promise<{ readonly runId: string }>;

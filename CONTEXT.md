@@ -5,12 +5,16 @@ BrainBuddy preserves a user's original input while giving local search and AI a 
 ## Records
 
 **Original Input（原始输入）**:
-The complete text submitted by the user through any supported channel.
+The complete text the user explicitly commits through a Capture or Conversation Turn.
 _Avoid_: Keystroke log, autosaved draft
 
 **Source Record（原始记录）**:
-The preserved, private record of one user submission and the channel where it occurred. Its Original Input is excluded from automatic AI context.
+The preserved, private record of a Capture or Conversation Turn. A Local Search does not create one, and its Original Input is excluded from automatic AI context.
 _Avoid_: Log, audit log, memory backup
+
+**Local Search（本地查询）**:
+A read-only lookup over local Source Records and Credential metadata. Its search text is transient and does not become a Source Record.
+_Avoid_: Query Source, saved submission
 
 **Conversation Turn（对话轮次）**:
 One user submission to AI. It may ask a question, provide information, or request a Memory change without being classified in advance.

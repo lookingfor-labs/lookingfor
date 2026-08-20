@@ -119,10 +119,6 @@ export interface DemoOfflineSearchResult {
   readonly credentials: readonly DemoCredentialSummary[];
 }
 
-export interface DemoQueryResult extends DemoOfflineSearchResult {
-  readonly receipt: DemoSaveReceipt;
-}
-
 export type AiActionIntent =
   | {
       readonly kind: "tool_call";

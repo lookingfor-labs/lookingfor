@@ -62,6 +62,10 @@ describe("SqliteSourceStore", () => {
     expect(result.credentials[0]?.sourceIds).toEqual([captureReceipt.sourceId, conversationReceipt.sourceId]);
     expect(store.searchOffline("Figma").sources).toHaveLength(2);
     expect(store.searchOffline("Figma").credentials).toHaveLength(1);
+    const beforeRepeatedSearch = store.searchOffline("");
+    store.searchOffline("Figma");
+    store.searchOffline("Figma");
+    expect(store.searchOffline("")).toEqual(beforeRepeatedSearch);
     expect(store.revealSource(conversationReceipt.sourceId)).toMatchObject({
       kind: "conversation",
       originalContent: `原始对话 ${secret}`

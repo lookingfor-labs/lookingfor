@@ -23,8 +23,6 @@ import {
   RevealDemoSourceRequestSchema,
   SEARCH_DEMO_SOURCES_CHANNEL,
   SearchDemoSourcesRequestSchema,
-  SUBMIT_DEMO_QUERY_CHANNEL,
-  SubmitDemoQueryRequestSchema,
   SAVE_DEMO_CANDIDATE_CHANNEL,
   START_AI_CONVERSATION_CHANNEL,
   StartAiConversationRequestSchema
@@ -145,19 +143,6 @@ app.whenReady().then(() => {
   ipcMain.handle(SEARCH_DEMO_SOURCES_CHANNEL, (_event, request: unknown) => {
     const { query } = SearchDemoSourcesRequestSchema.parse(request);
     return sourceStore!.searchOffline(query);
-  });
-  ipcMain.handle(SUBMIT_DEMO_QUERY_CHANNEL, (_event, request: unknown) => {
-    const { text } = SubmitDemoQueryRequestSchema.parse(request);
-    const receipt = sourceStore!.save(createSuggestedProtectionPlan(text), text, "local_search");
-    const result = sourceStore!.searchOffline(text, receipt.sourceId);
-    const submittedCredentials = sourceStore!.searchOffline("").credentials
-      .filter((credential) => receipt.credentialIds.includes(credential.credentialId));
-    return {
-      receipt,
-      sources: result.sources,
-      credentials: [...submittedCredentials, ...result.credentials.filter((credential) =>
-        !receipt.credentialIds.includes(credential.credentialId))]
-    };
   });
   ipcMain.handle(REVEAL_DEMO_SOURCE_CHANNEL, (_event, request: unknown) => {
     const { sourceId } = RevealDemoSourceRequestSchema.parse(request);

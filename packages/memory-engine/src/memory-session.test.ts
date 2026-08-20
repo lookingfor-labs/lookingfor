@@ -93,8 +93,12 @@ describe("DemoSourceSession", () => {
   it("searches protected source content and reveals the original only by source id", () => {
     const session = new DemoSourceSession();
     const receipt = session.save(safePlan, "只有手动操作才能看到的原始内容");
+    const beforeSearch = session.searchOffline("");
 
     expect(session.search("SOURCE_DEMO_001")).toHaveLength(1);
+    session.searchOffline("key");
+    session.searchOffline("key");
+    expect(session.searchOffline("")).toEqual(beforeSearch);
     expect(JSON.stringify(session.search("key"))).not.toContain("只有手动操作才能看到的原始内容");
     expect(session.revealSource(receipt.sourceId).originalContent).toBe("只有手动操作才能看到的原始内容");
     expect(() => session.revealSource("SOURCE_DEMO_999")).toThrow("Source record not found");
