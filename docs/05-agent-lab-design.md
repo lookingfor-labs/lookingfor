@@ -1,7 +1,7 @@
 # 05 Agent 实验室设计方案
 
-状态：待评审
-更新时间：2026-08-21
+状态：评审约束已吸收，待实施
+更新时间：2026-08-23
 
 ## 1. 评审目标
 
@@ -10,8 +10,9 @@
 1. Agent 是否能完成受控的本地检索、Memory 读取和 Memory 修改闭环；
 2. 自动写入模式是否具有足够的防误写和恢复能力；
 3. `write_memory` 是否能表达局部修改，同时保持接口稳定、可审计；
-4. Source、Credential 和 Memory 的隐私边界是否与现有领域定义一致；
-5. 三轮工具调用限制是否定义清楚且可执行。
+4. Source、Credential 和 Memory 的隐私边界是否覆盖异常、日志、事件和 Revision 等旁路；
+5. tool batch、工具调用和模型请求预算是否分别受限；
+6. 审批、取消、恢复和终止协议是否由运行时控制，而非依赖事件消费者。
 
 ## 2. 当前基础
 
@@ -75,6 +76,16 @@ type MemoryWritePolicy = "require_approval" | "auto_apply";
 
 限制写入 `memories/` 只能控制影响范围，不能防止错误覆盖或内容污染。因此，启用 `auto_apply` 前必须具备版本校验、原子写入、修改审计、历史版本和撤销能力。
 
+这是一条 Agent Runtime 硬约束，而不是 UI 显隐规则：
+
+```ts
+if (writePolicy === "auto_apply" && !revisionStore.isAvailable()) {
+  throw new AgentRunRejectedError("REVISION_STORE_UNAVAILABLE");
+}
+```
+
+任何入口都不能在 Revision Store 不可用时启动 `auto_apply` Run。
+
 ## 4. Agent 工具
 
 Demo 05 开放四个本地能力工具。另有一个不访问本地资源的终止输出协议 `brainbuddy_finish`。
@@ -127,14 +138,18 @@ interface ReadMemoryInput {
 interface ReadMemoryResult {
   path: string;
   content: string;
-  version: string;
+  version: MemoryVersion;
   updatedAt: string;
   sourceIds: readonly string[];
   credentialIds: readonly string[];
 }
+
+type MemoryVersion = string;
 ```
 
-路径必须通过统一的 Memory Path 校验，只允许 `memories/**/*.md`。
+`MemoryVersion` 对调用者是不透明字符串，由“单调递增 Revision + 内容哈希”组成。Revision 检测 BrainBuddy 内发生过的 A → B → A，内容哈希检测 BrainBuddy 外部对 Markdown 文件的直接修改。调用者只能原样回传，不能解析或构造版本。
+
+路径必须通过统一的 Memory Path 校验，只允许 `memories/**/*.md`。Memory Store 还必须拒绝目标文件或任一父目录中的符号链接，并在最终访问前校验 canonical path 仍位于 Memory Root 内。
 
 ### 4.4 `write_memory`
 
@@ -179,7 +194,7 @@ type MemoryEdit =
 {
   "operation": "edit",
   "path": "memories/figma.md",
-  "expectedVersion": "当前文件的 SHA-256 版本",
+  "expectedVersion": "42:7f83b165...",
   "edits": [
     {
       "type": "replace",
@@ -203,10 +218,38 @@ type MemoryEdit =
 6. 所有 edits 成功后才原子落盘，任意一项失败则文件完全不变；
 7. `newText` 为空可以删除局部内容，但首版不允许删除整个 Memory 文件；
 8. 单次 edits 数量、输入字节数和结果文件大小必须有限制；
-9. Memory 中的 Source/Credential 引用必须通过格式与存在性校验；
+9. Memory 中的 Source/Credential 引用必须通过格式、存在性和本 Run 可见性校验；
 10. 返回新版本、实际 diff、提取到的引用及历史版本标识。
 
 不采用整文件覆盖作为常规编辑方式，因为小修改会扩大冲突面并增加无关内容漂移。不采用纯行号替换，因为它不能单独证明 Agent 修改的是预期内容。首版不采用 unified diff，因为解析、模糊匹配和失败诊断会显著增加实现复杂度；以后可以在现有写入模块内部增加 patch 适配器，而不改变外部审批和审计流程。
+
+#### 不可变写入计划
+
+`write_memory` 的参数通过校验后先生成不可变的 `PreparedMemoryWrite`，审批和执行都引用同一个计划：
+
+```ts
+interface PreparedMemoryWrite {
+  readonly approvalId: string;
+  readonly path: string;
+  readonly operation: "create" | "edit";
+  readonly baseVersion: MemoryVersion | null;
+  readonly normalizedEdits: readonly MemoryEdit[];
+  readonly resultingContent: string;
+  readonly resultingContentHash: string;
+  readonly diff: string;
+  readonly sourceIds: readonly string[];
+  readonly credentialIds: readonly string[];
+  readonly requestHash: string;
+}
+```
+
+用户看到的 diff 必须由该计划生成。`approve(approvalId)` 从运行时取回原计划，重新检查当前版本，然后原样提交其 `resultingContent`；审批后不重新解释模型参数。计划内容、审批卡片和最终 Revision 通过 `requestHash` 关联。
+
+#### Run Reference Set
+
+每个 Run 维护 `seenSourceIds`、`seenCredentialIds` 和 `seenMemoryPaths`。本次 conversation Source，以及搜索或读取工具实际返回的 ID/Path，会进入对应集合。
+
+Memory 新增的引用必须同时满足：记录真实存在，并且属于本 Run 的 seen reference set。目标 Memory 原来已有的引用可以继续保留。这样既防止模型枚举真实 ID，也防止把未检索过的记录错误挂到 Memory 上。
 
 ### 4.5 `brainbuddy_finish`
 
@@ -224,6 +267,8 @@ interface BrainBuddyFinishInput {
 
 运行时拒绝本次 Run 未见过的引用。成功执行后结束 Agent 循环。
 
+`brainbuddy_finish` 必须是所在 AssistantMessage 中唯一的 tool call。只要同一消息还包含其他工具，运行时就在 preflight 阶段拒绝整个 batch，不依赖 pi-agent-core 的混合 batch termination 行为。每个 Run 最多允许两次 finish 尝试；成功后由 Agent Runtime 直接进入 `Completed`，不再发起模型请求。
+
 ## 5. 写入执行模型
 
 ### 5.1 需要审批
@@ -239,15 +284,26 @@ Agent 调用 write_memory
 → Agent 根据结果继续下一轮
 ```
 
-等待用户决策不计入模型轮次，也不占用模型请求超时。取消整个 Run 会终止待审批请求，且不产生写入。
+等待用户决策期间没有存活的模型 HTTP 请求，不增加 `modelRequestCount`。取消整个 Run 会终止待审批请求，且不产生写入。
+
+审批等待由工具执行路径中的 `ApprovalGate` 控制：
+
+```ts
+const prepared = memoryStore.prepare(input, runReferenceSet);
+await approvalGate.wait(prepared, signal);
+return memoryStore.commit(prepared);
+```
+
+`approval_required` 事件只用于观察和渲染，事件监听器不承担阻塞 Agent 的职责。不能依赖低层 agent loop 事件消费者的异步行为实现审批。
 
 ### 5.2 自动写入
 
 ```text
 Agent 调用 write_memory
 → 参数、路径、版本和引用校验
-→ 保存修改前版本
+→ 创建 prepared Revision
 → 原子写入
+→ Revision 标记 applied
 → 发出 auto_applied 事件
 → 返回新版本
 → Agent 继续下一轮
@@ -264,6 +320,14 @@ Agent 调用 write_memory
 - 修改前后版本和内容快照；
 - diff、时间和执行结果。
 
+Revision 状态为：
+
+```ts
+type RevisionStatus = "prepared" | "applied" | "failed" | "reverted";
+```
+
+Memory 文件和 Revision Store 不共享事务，因此执行顺序固定为：创建 `prepared` Revision → 原子替换 Memory → 标记 `applied`。应用启动时检查遗留的 `prepared`，根据 before/after version 与内容哈希恢复为 `applied` 或 `failed`，并产生安全恢复记录。只有建立 `applied` Revision 后，写入工具才向 Agent 返回成功。
+
 Revision 存放在 Agent 无法访问的运行时存储中。撤销通过本地运行时执行，并再次校验当前版本，避免覆盖撤销发生前的新修改。
 
 ## 6. 运行时模块与接口
@@ -274,32 +338,48 @@ Revision 存放在 Agent 无法访问的运行时存储中。撤销通过本地�
 interface AgentRuntime {
   prepare(input: PrepareAgentRunInput): AgentRunDraft;
   start(draftId: string, onEvent: (event: AgentRunEvent) => void): AgentRunHandle;
-  resolveApproval(runId: string, approvalId: string, decision: "approve" | "deny"): void;
-  cancel(runId: string): void;
+  resolveApproval(
+    runId: string,
+    approvalId: string,
+    decision: "approve" | "deny"
+  ): Promise<ApprovalResolution>;
+  cancel(runId: string): Promise<void>;
+}
+
+interface AgentRunHandle {
+  readonly runId: string;
+  readonly done: Promise<AgentRunResult>;
 }
 ```
 
 内部依赖两个受控数据接口：
 
 - Protected Record 读取适配器：只返回可提供给 Agent 的 Source/Credential 投影；
-- Memory Store 适配器：负责路径校验、读取、局部修改、版本控制、原子落盘和 Revision。
+- Memory Store 适配器：负责路径安全、读取、写入计划、版本控制、原子落盘、Revision 和撤销；
+- Approval Gate：负责不可变写入计划的等待、一次性决策、过期和取消。
 
 审批策略属于 Agent Run，文件一致性规则属于 Memory Store。两者不能混在 UI 或工具回调中重复实现。
 
-建议使用与当前 pi-ai 对齐的 `@earendil-works/pi-agent-core@0.80.2`，并使用顺序工具执行模式，以保证写入、审批和审计事件顺序确定。
+Protected Record 适配器只能产生 Safe DTO。数据库实体不能跨过该接缝进入 Agent Runtime；工具结果、事件、调试面板、审计、异常上下文和 Revision 元数据都只能从 Safe DTO 或 Memory DTO 构造。
 
-## 7. 轮次与限制
+建议使用与当前 pi-ai 对齐的 `@earendil-works/pi-agent-core@0.80.2`，并使用顺序工具执行模式，以保证写入、审批和审计事件顺序确定。实现必须以 [`v0.80.2` 标签文档](https://github.com/earendil-works/pi/blob/v0.80.2/packages/agent/README.md)、实际类型、源码和定向测试为依据，不能直接按当前 main 文档或更新版本开发。升级 pi 依赖是独立决策，不与 Demo 05 实施绑定。
 
-一个“工具轮次”定义为：一条 AssistantMessage 中的一个或多个工具请求，以及对应的一批 ToolResult。最终 `brainbuddy_finish` 不计入工具轮次。
+## 7. Run 预算
+
+pi-agent-core 的 `turn` 是一次模型请求及其后续工具执行。本文把“一条 AssistantMessage 中的一个或多个本地工具请求及对应 ToolResult”称为 `tool batch`，不使用“工具轮次”，避免两种计数混淆。
 
 首版限制：
 
-- 最多 3 个工具轮次；
-- 工具总调用数另设上限，建议 8 次；
+- `toolBatchCount <= 3`；
+- `toolCallCount <= 8`；
+- `modelRequestCount <= 5`；
+- `finishAttemptCount <= 2`；
+- `pendingApprovalCount <= 1`；
 - 写入工具顺序执行；
-- 同一时间最多存在一个待审批写入；
-- 第 3 个工具轮次结束后，只允许模型调用 `brainbuddy_finish`；
+- 第 3 个 tool batch 结束后，只允许模型单独调用 `brainbuddy_finish`；
 - 未注册工具、越界路径、无效参数和未知引用全部返回结构化失败，不执行副作用。
+
+所有计数由 Agent Runtime 在模型请求和工具 preflight 前执行硬校验。达到 `modelRequestCount` 或 `finishAttemptCount` 上限后直接结束为预算失败，不能通过向模型追加错误消息继续形成无界循环。
 
 ## 8. 页面设计
 
@@ -311,7 +391,7 @@ interface AgentRuntime {
 - Memory 写入策略开关；
 - “准备 Agent Run”和“确认调用 DeepSeek”；
 - 准备后生成的 conversation Source ID；
-- 本次策略、模型、轮次预算和状态。
+- 本次策略、模型、tool batch/调用/模型请求预算和状态。
 
 启用自动写入时显示持续可见的说明：
 
@@ -347,6 +427,8 @@ agent_completed / agent_failed / agent_cancelled
 
 每个工具事件可展开查看发送给模型的参数、返回给模型的安全结果、耗时和错误。Credential 明文与 Source 原文在任何调试视图中都不可出现。
 
+Run 状态至少包括：`RunningModel`、`RunningTool`、`AwaitingApproval`、`Completed`、`Failed` 和 `Cancelled`。状态一旦进入终态就不能恢复到运行态。
+
 ### 8.4 写入检查
 
 审批卡片和自动写入记录都显示：
@@ -364,40 +446,69 @@ agent_completed / agent_failed / agent_cancelled
 以下条件必须由运行时保证，不能只依赖系统提示词：
 
 1. Agent 无法取得 Source 原文、Credential 明文和数据库密钥；
-2. Agent 只能读取和写入合法 Memory Path；
+2. Agent 只能读取和写入 canonical path 位于 Memory Root 且路径链不含符号链接的合法 Memory Path；
 3. 自动写入与审批写入执行完全相同的校验；
-4. 每次更新使用乐观版本校验，过期操作不会覆盖新内容；
+4. 每次更新使用 Revision + 内容哈希的乐观版本校验，过期操作和 A → B → A 不会覆盖新内容；
 5. 文件写入是原子的，失败不会留下部分内容；
-6. Agent 提供的未知引用不能进入 Memory；
+6. Agent 提供的未知引用或本 Run 未见过的新引用不能进入 Memory；
 7. 工具输出有数量和大小上限；
 8. 未注册工具没有执行路径；
-9. 每次写入都可审计；自动写入可撤销；
-10. 用户取消 Run 后不会继续模型调用或执行待审批写入。
+9. 每次成功写入都有 applied Revision；自动写入可撤销；
+10. Safe DTO 是 Protected Record 数据跨入 Agent Runtime 的唯一形式；
+11. 工具、事件、日志、调试信息和 Revision 元数据不序列化内部数据库实体；
+12. 用户取消 Run 后不会继续模型调用或执行待审批写入。
+
+工具失败统一映射为安全错误，不把底层 exception、SQL、文件系统绝对路径或内部对象原样返回给模型和 UI：
+
+```ts
+interface SafeToolError {
+  readonly code:
+    | "VERSION_CONFLICT"
+    | "AMBIGUOUS_MATCH"
+    | "INVALID_PATH"
+    | "UNKNOWN_REFERENCE"
+    | "REFERENCE_NOT_SEEN"
+    | "LIMIT_EXCEEDED"
+    | "APPROVAL_EXPIRED"
+    | "RUN_CANCELLED";
+  readonly message: string;
+  readonly retryable: boolean;
+}
+```
+
+取消语义固定为：
+
+- `RunningModel`：中止 provider request；
+- `RunningTool`：将同一个 `AbortSignal` 传播给工具；
+- `AwaitingApproval`：拒绝 Approval Gate promise，并使 Prepared Write 失效；
+- 任意状态进入 `Cancelled` 后，迟到的 `resolveApproval` 只返回已过期结果，不能重新激活写入。
 
 ## 10. 实施顺序
 
 ### 阶段 A：Memory 局部修改模块
 
 - 扩展 Memory Store 的修改接口；
-- 实现精确替换、前后插入、追加、版本冲突和原子写入；
-- 实现 Revision 与撤销；
+- 实现精确替换、前后插入、追加、不可变 Prepared Write 和原子写入；
+- 实现 Revision + 内容哈希版本、Revision 状态恢复与撤销；
+- 实现 canonical path 与符号链接防逃逸；
 - 使用内存适配器和文件适配器运行相同契约测试。
 
-完成标准：所有修改方式、冲突、歧义匹配、部分失败回滚和撤销均有自动化测试。
+完成标准：所有修改方式、ABA/外部修改冲突、歧义匹配、部分失败回滚、崩溃恢复、路径逃逸和撤销均有自动化测试。
 
 ### 阶段 B：只读 Agent 闭环
 
 - 引入 pi-agent-core；
 - 实现 `search_local_records`、`search_memories` 和 `read_memory`；
-- 实现三轮限制、取消、结构化终止与事件归一化；
+- 实现 Run Reference Set、Safe DTO 和 Safe Tool Error；
+- 实现 tool batch/调用/模型请求预算、取消、唯一 finish 与事件归一化；
 - 使用伪模型验证工具循环，不调用真实付费接口。
 
-完成标准：Agent 可以按需搜索、读取并完成回答，且越界工具和未知引用被拒绝。
+完成标准：Agent 可以按需搜索、读取并完成回答，且越界工具、混合 finish、未知/未见引用和超预算请求被拒绝；定向测试证明行为符合 pi-agent-core `0.80.2`。
 
 ### 阶段 C：审批和自动写入
 
 - 接入 `write_memory`；
-- 实现审批等待和决策 IPC；
+- 实现独立 Approval Gate、审批等待和决策 IPC；
 - 实现 Run 级写入策略快照；
 - 将写入结果送回 Agent 继续推理。
 
@@ -442,7 +553,7 @@ agent_completed / agent_failed / agent_cancelled
 
 - Agent 先读取目标 Memory；
 - `write_memory` 使用当前版本和唯一旧文本提出局部替换；
-- Agent 暂停，页面展示 diff；
+- Agent 暂停，页面展示由不可变 Prepared Write 生成的 diff；
 - 用户批准后写入，并将新版本返回 Agent；
 - Agent 根据成功结果完成回答。
 
@@ -453,6 +564,7 @@ agent_completed / agent_failed / agent_cancelled
 期望：
 
 - 不出现审批阻塞；
+- Revision Store 不可用时，Runtime 拒绝启动 Run；
 - 所有校验仍执行；
 - 页面实时显示 `auto_applied` 和 diff；
 - 用户可以撤销，撤销后内容和版本符合预期；
@@ -463,17 +575,44 @@ agent_completed / agent_failed / agent_cancelled
 期望：
 
 - `expectedVersion` 过期时拒绝写入；
+- 文件经历 A → B → A 或被外部直接修改时拒绝旧写入；
 - 旧文本出现多次时拒绝写入；
 - Agent 获得结构化错误后可以重新读取并重试；
 - 失败期间文件内容没有变化。
 
-## 12. 请评审者回答的问题
+### 11.5 预算、终止与取消
 
-1. `write_memory` 的精确文本编辑是否足以覆盖 Demo，还是首版就应支持 unified diff？
-2. `auto_apply` 是否必须以 Revision 和撤销能力完成为启用前置条件？
-3. 三个工具轮次、八次工具调用的双重限制是否合理？
-4. `brainbuddy_finish` 作为输出协议不计入工具轮次是否清晰？
-5. 写入审批应该阻塞同一个 Agent Run，还是结束 Run 并由新 Run 接续？
-6. 工具和事件中是否还存在可能泄露 Source 原文或 Credential 明文的字段？
-7. Memory 引用存在性校验是否还需要更强的内容规则？
-8. 当前模块接口是否把审批策略、Agent 循环和文件一致性放在了正确的接缝上？
+期望：
+
+- `brainbuddy_finish` 与其他工具混合出现时整个 batch 被拒绝；
+- 超过 tool batch、工具调用、模型请求或 finish 尝试上限时 Run 有界失败；
+- AwaitingApproval 状态取消后，迟到的批准不能执行 Prepared Write；
+- 运行中的 provider request 和工具都收到取消信号。
+
+### 11.6 路径与旁路泄露
+
+期望：
+
+- 文件或父目录为符号链接时读写被拒绝；
+- Source 原文和 Credential 明文不出现在工具结果、异常、事件、日志、Revision 元数据和调试序列化中；
+- 新引用真实存在但未被本 Run 看见时仍被拒绝；已有 Memory 引用可以原样保留。
+
+## 12. 评审结论与实施前核对
+
+已接受的结论：
+
+- 首版使用精确文本编辑，不实现 unified diff；
+- Revision、恢复和撤销是 `auto_apply` 的运行时硬前置条件；
+- 审批阻塞同一个 Run，由 Approval Gate 控制；
+- `brainbuddy_finish` 独占一个 AssistantMessage，并受尝试次数和模型请求总数限制；
+- 新引用同时通过存在性与 Run Reference Set 校验；
+- Memory Store、Agent Runtime、Approval Gate 和 Protected Record 适配器各自保持单一职责。
+
+阶段 A 开始前必须完成以下核对：
+
+1. 为 opaque MemoryVersion、Revision 状态恢复和撤销确定持久化格式；
+2. 列出 Protected Record Safe DTO 的完整字段白名单；
+3. 使用 `v0.80.2` 源码和伪模型固定 sequential batch、AbortSignal、terminate 与事件顺序行为；
+4. 为 tool batch、工具调用、模型请求、finish 尝试和审批数量分别编写上限测试；
+5. 为符号链接、异常序列化、迟到审批和 Run Reference Set 编写回归测试；
+6. 确认 Revision Store 不可用时所有入口都无法启动 `auto_apply`。
