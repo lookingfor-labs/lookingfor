@@ -146,6 +146,14 @@ export class SqliteSourceStore {
     };
   }
 
+  hasSource(sourceId: string): boolean {
+    return Boolean(this.#database.prepare("SELECT 1 FROM sources WHERE source_id = ?").get(sourceId));
+  }
+
+  hasCredential(credentialId: string): boolean {
+    return this.#credentialExists(credentialId);
+  }
+
   close(): void {
     this.#database.close();
   }

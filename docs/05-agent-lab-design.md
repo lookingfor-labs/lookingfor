@@ -1,6 +1,6 @@
 # 05 Agent 实验室设计方案
 
-状态：评审约束已吸收，待实施
+状态：首版已实施，可进入页面验收
 更新时间：2026-08-23
 
 ## 1. 评审目标
@@ -24,7 +24,8 @@ BrainBuddy 当前已经具备：
 - Demo 04 通过 pi-ai 和 DeepSeek 完成一次流式调用；
 - Demo 04 能展示模型输入、原始回复、动作意图、Memory 修改提案和调用审计；
 - Demo 04 的 Memory 修改在模型调用结束后由用户确认执行；
-- Demo 05 当前只有静态界面，没有 Agent 运行时。
+- Demo 05 已接入 pi-agent-core 0.80.2、DeepSeek、受控工具、审批门、Revision 与撤销界面；
+- `desktop-dev` 同时支持 Electron 和无图形会话下的浏览器验收。
 
 Demo 05 不应复制 Demo 04。二者的核心差异是：
 
@@ -608,11 +609,15 @@ interface SafeToolError {
 - 新引用同时通过存在性与 Run Reference Set 校验；
 - Memory Store、Agent Runtime、Approval Gate 和 Protected Record 适配器各自保持单一职责。
 
-阶段 A 开始前必须完成以下核对：
+实施时已完成以下核对：
 
-1. 为 opaque MemoryVersion、Revision 状态恢复和撤销确定持久化格式；
-2. 列出 Protected Record Safe DTO 的完整字段白名单；
-3. 使用 `v0.80.2` 源码和伪模型固定 sequential batch、AbortSignal、terminate 与事件顺序行为；
-4. 为 tool batch、工具调用、模型请求、finish 尝试和审批数量分别编写上限测试；
-5. 为符号链接、异常序列化、迟到审批和 Run Reference Set 编写回归测试；
-6. 确认 Revision Store 不可用时所有入口都无法启动 `auto_apply`。
+1. MemoryVersion 使用 Revision 序号与内容哈希组成的 opaque version，Revision 使用独立 JSON ledger 持久化；
+2. Protected Record 只通过 Source/Credential Safe DTO 进入 Runtime；
+3. 使用 `v0.80.2` 实际 API 和伪模型固定 sequential batch、AbortSignal、terminate 与事件顺序行为；
+4. tool batch、工具调用、模型请求、finish 尝试分别计数，混合 finish batch 在执行前整体拒绝；
+5. 已覆盖符号链接、ABA、外部修改、歧义编辑、异常脱敏、迟到审批、取消和 Run Reference Set 回归测试；
+6. Revision Store 不可用时 Runtime 会在准备阶段拒绝 `auto_apply`；
+7. DeepSeek function schema 顶层统一为 object，create/edit 的条件约束由 Runtime 二次校验；
+8. 创建和编辑产生的 Revision 都可撤销；撤销创建会删除对应 Memory 文件。
+
+当前实现验证基线：仓库测试 50 项通过，所有 workspace 类型检查通过，桌面生产构建通过，真实 DeepSeek 只读 Agent Run 完成并产生 `brainbuddy_finish`。写入审批与自动撤销通过伪模型端到端测试，保留给页面手动验收。

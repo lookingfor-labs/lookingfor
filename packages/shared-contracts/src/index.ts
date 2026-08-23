@@ -7,8 +7,14 @@ import type {
   DemoSourceReveal,
   PrivacyAnalysis,
   ProtectionPreview,
-  MemoryFile
+  MemoryFile,
+  MemoryRevertResult
 } from "@brainbuddy/domain";
+import type {
+  AgentRunDraft,
+  AgentRuntimeEvent,
+  ApprovalResolution
+} from "@brainbuddy/agent-runtime";
 
 export const ANALYZE_INPUT_CHANNEL = "privacy:analyze-input";
 export const PREVIEW_PROTECTION_CHANNEL = "privacy:preview-protection";
@@ -20,6 +26,12 @@ export const START_AI_CONVERSATION_CHANNEL = "ai:start-conversation";
 export const CANCEL_AI_CONVERSATION_CHANNEL = "ai:cancel-conversation";
 export const AI_CONVERSATION_EVENT_CHANNEL = "ai:conversation-event";
 export const APPLY_MEMORY_OPERATION_CHANNEL = "memory:apply-operation";
+export const PREPARE_AGENT_RUN_CHANNEL = "agent:prepare-run";
+export const START_AGENT_RUN_CHANNEL = "agent:start-run";
+export const RESOLVE_AGENT_APPROVAL_CHANNEL = "agent:resolve-approval";
+export const CANCEL_AGENT_RUN_CHANNEL = "agent:cancel-run";
+export const AGENT_RUN_EVENT_CHANNEL = "agent:run-event";
+export const REVERT_MEMORY_REVISION_CHANNEL = "memory:revert-revision";
 
 export const AnalyzeInputRequestSchema = z.object({
   text: z.string().max(20_000)
@@ -59,6 +71,20 @@ export const CancelAiConversationRequestSchema = z.object({
   runId: z.string().uuid()
 });
 
+export const PrepareAgentRunRequestSchema = z.object({
+  text: z.string().trim().min(1).max(2_000),
+  writePolicy: z.enum(["require_approval", "auto_apply"])
+});
+
+export const StartAgentRunRequestSchema = z.object({ draftId: z.string().uuid() });
+export const ResolveAgentApprovalRequestSchema = z.object({
+  runId: z.string().uuid(),
+  approvalId: z.string().uuid(),
+  decision: z.enum(["approve", "deny"])
+});
+export const CancelAgentRunRequestSchema = z.object({ runId: z.string().uuid() });
+export const RevertMemoryRevisionRequestSchema = z.object({ revisionId: z.string().uuid() });
+
 export type SearchDemoSourcesRequest = z.infer<typeof SearchDemoSourcesRequestSchema>;
 export type RevealDemoSourceRequest = z.infer<typeof RevealDemoSourceRequestSchema>;
 export const MemoryOperationSchema = z.discriminatedUnion("operation", [
@@ -71,7 +97,7 @@ export const MemoryOperationSchema = z.discriminatedUnion("operation", [
   z.object({
     operation: z.literal("update"),
     path: z.string().min(1).max(1_000),
-    expectedVersion: z.string().length(64),
+    expectedVersion: z.string().min(64).max(100),
     content: z.string().min(1).max(50_000),
     reason: z.string().min(1).max(1_000)
   })
@@ -83,10 +109,20 @@ export type PrepareAiConversationRequest = z.infer<typeof PrepareAiConversationR
 export type StartAiConversationRequest = z.infer<typeof StartAiConversationRequestSchema>;
 export type CancelAiConversationRequest = z.infer<typeof CancelAiConversationRequestSchema>;
 export type ApplyMemoryOperationRequest = z.infer<typeof ApplyMemoryOperationRequestSchema>;
+export type PrepareAgentRunRequest = z.infer<typeof PrepareAgentRunRequestSchema>;
+export type StartAgentRunRequest = z.infer<typeof StartAgentRunRequestSchema>;
+export type ResolveAgentApprovalRequest = z.infer<typeof ResolveAgentApprovalRequestSchema>;
+export type CancelAgentRunRequest = z.infer<typeof CancelAgentRunRequestSchema>;
+export type RevertMemoryRevisionRequest = z.infer<typeof RevertMemoryRevisionRequestSchema>;
 
 export interface AiConversationRunEvent {
   readonly runId: string;
   readonly event: AiConversationEvent;
+}
+
+export interface AgentRunEventPayload {
+  readonly runId: string;
+  readonly event: AgentRuntimeEvent;
 }
 
 export interface BrainBuddyApi {
@@ -100,4 +136,10 @@ export interface BrainBuddyApi {
   cancelAiConversation(request: CancelAiConversationRequest): Promise<void>;
   onAiConversationEvent(listener: (event: AiConversationRunEvent) => void): () => void;
   applyMemoryOperation(request: ApplyMemoryOperationRequest): Promise<MemoryFile>;
+  prepareAgentRun(request: PrepareAgentRunRequest): Promise<AgentRunDraft>;
+  startAgentRun(request: StartAgentRunRequest): Promise<{ readonly runId: string }>;
+  resolveAgentApproval(request: ResolveAgentApprovalRequest): Promise<ApprovalResolution>;
+  cancelAgentRun(request: CancelAgentRunRequest): Promise<void>;
+  onAgentRunEvent(listener: (event: AgentRunEventPayload) => void): () => void;
+  revertMemoryRevision(request: RevertMemoryRevisionRequest): Promise<MemoryRevertResult>;
 }

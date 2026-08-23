@@ -178,6 +178,90 @@ export type MemoryOperation =
       readonly reason: string;
     };
 
+export type MemoryEdit =
+  | {
+      readonly type: "replace";
+      readonly oldText: string;
+      readonly newText: string;
+    }
+  | {
+      readonly type: "insert_before" | "insert_after";
+      readonly anchor: string;
+      readonly content: string;
+    }
+  | {
+      readonly type: "append";
+      readonly content: string;
+    };
+
+export type MemoryWriteRequest =
+  | {
+      readonly operation: "create";
+      readonly path: string;
+      readonly content: string;
+      readonly reason: string;
+    }
+  | {
+      readonly operation: "edit";
+      readonly path: string;
+      readonly expectedVersion: string;
+      readonly edits: readonly MemoryEdit[];
+      readonly reason: string;
+    };
+
+export interface PreparedMemoryWrite {
+  readonly approvalId: string;
+  readonly path: string;
+  readonly operation: "create" | "edit";
+  readonly baseVersion: string | null;
+  readonly normalizedEdits: readonly MemoryEdit[];
+  readonly resultingContent: string;
+  readonly resultingContentHash: string;
+  readonly diff: string;
+  readonly sourceIds: readonly string[];
+  readonly credentialIds: readonly string[];
+  readonly reason: string;
+  readonly requestHash: string;
+}
+
+export type MemoryWritePolicy = "require_approval" | "auto_apply";
+export type MemoryRevisionStatus = "prepared" | "applied" | "failed" | "reverted";
+
+export interface MemoryRevision {
+  readonly revisionId: string;
+  readonly runId: string;
+  readonly toolCallId: string;
+  readonly writePolicy: MemoryWritePolicy;
+  readonly path: string;
+  readonly reason: string;
+  readonly requestHash: string;
+  readonly beforeContent: string | null;
+  readonly beforeVersion: string | null;
+  readonly afterContent: string | null;
+  readonly afterVersion: string | null;
+  readonly diff: string;
+  readonly status: MemoryRevisionStatus;
+  readonly createdAt: string;
+  readonly revertsRevisionId?: string | undefined;
+}
+
+export interface MemoryCommitMetadata {
+  readonly runId: string;
+  readonly toolCallId: string;
+  readonly writePolicy: MemoryWritePolicy;
+}
+
+export interface MemoryCommitResult {
+  readonly memory: MemoryFile;
+  readonly revision: MemoryRevision;
+}
+
+export interface MemoryRevertResult {
+  readonly path: string;
+  readonly deleted: boolean;
+  readonly memory: MemoryFile | null;
+}
+
 export interface AiConversationResponse {
   readonly message: string;
   readonly references: readonly {

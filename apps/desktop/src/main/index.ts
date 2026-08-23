@@ -4,27 +4,43 @@ import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { app, BrowserWindow, ipcMain, shell } from "electron";
 import { config as loadDotEnv } from "dotenv";
 import { createDeepSeekAiConversationEngine, type AiConversationEngine } from "@brainbuddy/ai-conversation";
+import {
+  createDeepSeekAgentRuntime,
+  type AgentRuntime,
+  type ProtectedRecordReader
+} from "@brainbuddy/agent-runtime";
 import { FileMemoryStore, type MemoryStore } from "@brainbuddy/memory-engine/memory";
 import { SqliteSourceStore } from "@brainbuddy/memory-engine/sqlite";
 import { buildProtectionPlan, PrivacyEngine, toProtectionPreview } from "@brainbuddy/privacy-engine";
 import {
   ANALYZE_INPUT_CHANNEL,
+  AGENT_RUN_EVENT_CHANNEL,
   AI_CONVERSATION_EVENT_CHANNEL,
   APPLY_MEMORY_OPERATION_CHANNEL,
   ApplyMemoryOperationRequestSchema,
   AnalyzeInputRequestSchema,
   CANCEL_AI_CONVERSATION_CHANNEL,
+  CANCEL_AGENT_RUN_CHANNEL,
+  CancelAgentRunRequestSchema,
   CancelAiConversationRequestSchema,
   PREPARE_AI_CONVERSATION_CHANNEL,
+  PREPARE_AGENT_RUN_CHANNEL,
+  PrepareAgentRunRequestSchema,
   PrepareAiConversationRequestSchema,
   PREVIEW_PROTECTION_CHANNEL,
   ProtectionRequestSchema,
   REVEAL_DEMO_SOURCE_CHANNEL,
+  RESOLVE_AGENT_APPROVAL_CHANNEL,
+  ResolveAgentApprovalRequestSchema,
+  REVERT_MEMORY_REVISION_CHANNEL,
+  RevertMemoryRevisionRequestSchema,
   RevealDemoSourceRequestSchema,
   SEARCH_DEMO_SOURCES_CHANNEL,
   SearchDemoSourcesRequestSchema,
   SAVE_DEMO_CANDIDATE_CHANNEL,
   START_AI_CONVERSATION_CHANNEL,
+  START_AGENT_RUN_CHANNEL,
+  StartAgentRunRequestSchema,
   StartAiConversationRequestSchema
 } from "@brainbuddy/shared-contracts";
 
@@ -45,8 +61,10 @@ const privacyEngine = new PrivacyEngine({
 let sourceStore: SqliteSourceStore | undefined;
 let memoryStore: MemoryStore | undefined;
 let aiConversationEngine: AiConversationEngine | undefined;
+let agentRuntime: AgentRuntime | undefined;
 const aiDrafts = new Map<string, ReturnType<AiConversationEngine["prepare"]>>();
 const aiRuns = new Map<string, AbortController>();
+const agentRuns = new Set<string>();
 
 function getAiConversationEngine(): AiConversationEngine {
   aiConversationEngine ??= createDeepSeekAiConversationEngine({
@@ -54,6 +72,32 @@ function getAiConversationEngine(): AiConversationEngine {
     ...(process.env.SECRET_DEEPSEEK_MODEL ? { modelId: process.env.SECRET_DEEPSEEK_MODEL } : {})
   });
   return aiConversationEngine;
+}
+
+function getAgentRuntime(): AgentRuntime {
+  if (!sourceStore || !memoryStore) throw new Error("Local stores are not ready");
+  const records: ProtectedRecordReader = {
+    search(query, limit) {
+      const result = sourceStore!.searchOffline(query);
+      const sources = result.sources.slice(0, limit);
+      const credentials = result.credentials.slice(0, limit);
+      return {
+        sources,
+        credentials,
+        total: result.sources.length + result.credentials.length,
+        truncated: sources.length < result.sources.length || credentials.length < result.credentials.length
+      };
+    },
+    sourceExists: (sourceId) => sourceStore!.hasSource(sourceId),
+    credentialExists: (credentialId) => sourceStore!.hasCredential(credentialId)
+  };
+  agentRuntime ??= createDeepSeekAgentRuntime({
+    apiKey: process.env.SECRET_DEEPSEEK_API_KEY ?? "",
+    ...(process.env.SECRET_DEEPSEEK_MODEL ? { modelId: process.env.SECRET_DEEPSEEK_MODEL } : {}),
+    records,
+    memories: memoryStore
+  });
+  return agentRuntime;
 }
 
 function createProtectionPlan(request: unknown) {
@@ -210,6 +254,38 @@ app.whenReady().then(() => {
     const { operation } = ApplyMemoryOperationRequestSchema.parse(request);
     return memoryStore!.apply(operation);
   });
+  ipcMain.handle(PREPARE_AGENT_RUN_CHANNEL, (_event, request: unknown) => {
+    const { text, writePolicy } = PrepareAgentRunRequestSchema.parse(request);
+    const receipt = sourceStore!.save(createSuggestedProtectionPlan(text), text, "conversation");
+    return getAgentRuntime().prepare({
+      message: receipt.preview.protectedContent,
+      conversationSourceId: receipt.sourceId,
+      writePolicy
+    });
+  });
+  ipcMain.handle(START_AGENT_RUN_CHANNEL, (event, request: unknown) => {
+    const { draftId } = StartAgentRunRequestSchema.parse(request);
+    const handle = getAgentRuntime().start(draftId, (agentEvent) => {
+      if (!event.sender.isDestroyed()) {
+        event.sender.send(AGENT_RUN_EVENT_CHANNEL, { runId: agentEvent.runId, event: agentEvent });
+      }
+    });
+    agentRuns.add(handle.runId);
+    void handle.done.finally(() => agentRuns.delete(handle.runId));
+    return { runId: handle.runId };
+  });
+  ipcMain.handle(RESOLVE_AGENT_APPROVAL_CHANNEL, (_event, request: unknown) => {
+    const { runId, approvalId, decision } = ResolveAgentApprovalRequestSchema.parse(request);
+    return getAgentRuntime().resolveApproval(runId, approvalId, decision);
+  });
+  ipcMain.handle(CANCEL_AGENT_RUN_CHANNEL, (_event, request: unknown) => {
+    const { runId } = CancelAgentRunRequestSchema.parse(request);
+    return getAgentRuntime().cancel(runId);
+  });
+  ipcMain.handle(REVERT_MEMORY_REVISION_CHANNEL, (_event, request: unknown) => {
+    const { revisionId } = RevertMemoryRevisionRequestSchema.parse(request);
+    return memoryStore!.revert(revisionId);
+  });
   createWindow();
 
   app.on("activate", () => {
@@ -225,6 +301,9 @@ app.on("before-quit", () => {
   for (const controller of aiRuns.values()) controller.abort();
   aiRuns.clear();
   aiDrafts.clear();
+  for (const runId of agentRuns) void agentRuntime?.cancel(runId);
+  agentRuns.clear();
+  agentRuntime = undefined;
   sourceStore?.close();
   sourceStore = undefined;
   memoryStore = undefined;

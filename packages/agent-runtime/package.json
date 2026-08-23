@@ -1,0 +1,17 @@
+{
+  "name": "@brainbuddy/agent-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "dependencies": {
+    "@brainbuddy/domain": "*",
+    "@brainbuddy/memory-engine": "*",
+    "@earendil-works/pi-agent-core": "0.80.2",
+    "@earendil-works/pi-ai": "0.80.2",
+    "typebox": "1.1.38"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  }
+}

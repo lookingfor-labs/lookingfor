@@ -16,6 +16,12 @@ processes:
   - name: "electron-vite"
     cmd: |-
       cd "${PROJECT_ROOT}"
+      lock_file="${PROJECT_ROOT}/.it-runner/states/desktop-dev.lock"
+      exec 9>"$lock_file"
+      if ! flock -n 9; then
+        echo "Another desktop-dev watcher is active; waiting to take over its development server"
+        flock 9
+      fi
       mise_bin="$(command -v mise || true)"
       if [ -z "$mise_bin" ] && [ -x "$HOME/.local/bin/mise" ]; then
         mise_bin="$HOME/.local/bin/mise"

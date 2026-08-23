@@ -61,7 +61,7 @@ const responseTool: Tool = {
       Type.Object({
         operation: Type.Literal("update"),
         path: Type.String({ minLength: 1, maxLength: 1_000 }),
-        expectedVersion: Type.String({ minLength: 64, maxLength: 64 }),
+        expectedVersion: Type.String({ minLength: 64, maxLength: 100 }),
         content: Type.String({ minLength: 1, maxLength: 50_000 }),
         reason: Type.String({ minLength: 1, maxLength: 1_000 })
       })

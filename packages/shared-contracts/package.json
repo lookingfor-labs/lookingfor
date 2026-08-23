@@ -8,6 +8,7 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
+    "@brainbuddy/agent-runtime": "*",
     "@brainbuddy/domain": "*"
   },
   "scripts": {

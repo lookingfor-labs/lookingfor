@@ -3,8 +3,18 @@ import { randomUUID } from "node:crypto";
 import type { Plugin } from "vite";
 import { z } from "zod";
 import { createDeepSeekAiConversationEngine, type AiConversationEngine } from "@brainbuddy/ai-conversation";
+import {
+  createDeepSeekAgentRuntime,
+  type AgentRuntime,
+  type ProtectedRecordReader
+} from "@brainbuddy/agent-runtime";
 import { DemoMemorySession } from "@brainbuddy/memory-engine/memory";
-import type { AiConversationDraft, AiConversationInput } from "@brainbuddy/domain";
+import type {
+  AiConversationDraft,
+  AiConversationInput,
+  DemoCredentialSummary,
+  DemoSourceSummary
+} from "@brainbuddy/domain";
 
 const prepareSchema = z.object({
   message: z.string().min(1).max(20_000),
@@ -36,17 +46,58 @@ const memoryOperationSchema = z.discriminatedUnion("operation", [
   z.object({ operation: z.literal("update"), path: z.string(), expectedVersion: z.string(), content: z.string(), reason: z.string() })
 ]);
 
+const agentPrepareSchema = z.object({
+  message: z.string().min(1).max(20_000),
+  conversationSourceId: z.string().max(200),
+  writePolicy: z.enum(["require_approval", "auto_apply"]),
+  sources: prepareSchema.shape.sources,
+  credentials: prepareSchema.shape.credentials
+});
+
+class BrowserProtectedRecords implements ProtectedRecordReader {
+  readonly #sources = new Map<string, DemoSourceSummary>();
+  readonly #credentials = new Map<string, DemoCredentialSummary>();
+
+  add(sources: readonly DemoSourceSummary[], credentials: readonly DemoCredentialSummary[]): void {
+    sources.forEach((source) => this.#sources.set(source.sourceId, source));
+    credentials.forEach((credential) => this.#credentials.set(credential.credentialId, credential));
+  }
+
+  search(query: string, limit: number) {
+    const normalized = query.toLocaleLowerCase();
+    const sources = [...this.#sources.values()].filter((source) =>
+      `${source.sourceId} ${source.kind} ${source.protectedContent}`.toLocaleLowerCase().includes(normalized)
+    );
+    const credentials = [...this.#credentials.values()].filter((credential) =>
+      `${credential.credentialId} ${credential.entityType} ${credential.maskedValue} ${credential.sourceIds.join(" ")}`
+        .toLocaleLowerCase().includes(normalized)
+    );
+    return {
+      sources: sources.slice(0, limit),
+      credentials: credentials.slice(0, limit),
+      total: sources.length + credentials.length,
+      truncated: sources.length > limit || credentials.length > limit
+    };
+  }
+
+  sourceExists(sourceId: string): boolean { return this.#sources.has(sourceId); }
+  credentialExists(credentialId: string): boolean { return this.#credentials.has(credentialId); }
+}
+
 export function aiConversationMiddleware(options: { readonly apiKey: string; readonly modelId?: string }): Plugin {
   let engine: AiConversationEngine | undefined;
+  let agentRuntime: AgentRuntime | undefined;
   const drafts = new Map<string, AiConversationDraft>();
   const memories = new DemoMemorySession();
+  const records = new BrowserProtectedRecords();
   const getEngine = () => engine ??= createDeepSeekAiConversationEngine(options);
+  const getAgentRuntime = () => agentRuntime ??= createDeepSeekAgentRuntime({ ...options, records, memories });
 
   return {
     name: "brainbuddy-ai-conversation-dev-server",
     configureServer(server) {
       server.middlewares.use(async (request, response, next) => {
-        if (request.method !== "POST" || !request.url?.startsWith("/api/ai-conversation/")) return next();
+        if (request.method !== "POST" || (!request.url?.startsWith("/api/ai-conversation/") && !request.url?.startsWith("/api/agent/"))) return next();
         try {
           if (request.url === "/api/ai-conversation/prepare") {
             const input = prepareSchema.parse(await readJson(request)) as Omit<AiConversationInput, "memories">;
@@ -76,6 +127,44 @@ export function aiConversationMiddleware(options: { readonly apiKey: string; rea
           if (request.url === "/api/ai-conversation/apply-memory") {
             const { operation } = z.object({ operation: memoryOperationSchema }).parse(await readJson(request));
             return sendJson(response, 200, memories.apply(operation));
+          }
+          if (request.url === "/api/agent/prepare") {
+            const input = agentPrepareSchema.parse(await readJson(request));
+            records.add(input.sources as DemoSourceSummary[], input.credentials as DemoCredentialSummary[]);
+            return sendJson(response, 200, getAgentRuntime().prepare({
+              message: input.message,
+              conversationSourceId: input.conversationSourceId,
+              writePolicy: input.writePolicy
+            }));
+          }
+          if (request.url === "/api/agent/run") {
+            const { draftId } = z.object({ draftId: z.string().uuid() }).parse(await readJson(request));
+            response.writeHead(200, {
+              "content-type": "application/x-ndjson; charset=utf-8",
+              "cache-control": "no-store",
+              connection: "keep-alive"
+            });
+            const handle = getAgentRuntime().start(draftId, (event) => response.write(`${JSON.stringify({ runId: event.runId, event })}\n`));
+            request.once("aborted", () => void getAgentRuntime().cancel(handle.runId));
+            await handle.done;
+            return response.end();
+          }
+          if (request.url === "/api/agent/approval") {
+            const input = z.object({
+              runId: z.string().uuid(),
+              approvalId: z.string().uuid(),
+              decision: z.enum(["approve", "deny"])
+            }).parse(await readJson(request));
+            return sendJson(response, 200, await getAgentRuntime().resolveApproval(input.runId, input.approvalId, input.decision));
+          }
+          if (request.url === "/api/agent/cancel") {
+            const { runId } = z.object({ runId: z.string().uuid() }).parse(await readJson(request));
+            await getAgentRuntime().cancel(runId);
+            return sendJson(response, 200, { cancelled: true });
+          }
+          if (request.url === "/api/agent/revert") {
+            const { revisionId } = z.object({ revisionId: z.string().uuid() }).parse(await readJson(request));
+            return sendJson(response, 200, memories.revert(revisionId));
           }
           return sendJson(response, 404, { error: "Not found" });
         } catch (error) {

@@ -119,6 +119,46 @@ h1 { margin: 0; font: 600 20px/1 Georgia, "Songti SC", serif; }
 .search-box { display: grid; grid-template-columns: 1fr auto; margin-top: 28px; }.search-box input { border: 0; outline: 0; background: transparent; padding: 20px; font: 15px Georgia, serif; }.search-box button { border: 0; background: #24231f; padding: 0 26px; color: #f1eee5; cursor: pointer; }.search-box small { grid-column: 1 / -1; border-top: 1px solid #dedbd2; padding: 9px 18px; text-transform: none; }.search-results { padding-top: 45px; }
 .future-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; padding-top: 34px; }.future-card { min-height: 330px; padding: 20px; background: #f8f6f0; border: 1px solid #d3d0c6; }.future-card > span { color: #8f8b81; font: 12px Georgia, serif; }.future-card h3 { margin: 18px 0; font: 20px Georgia, serif; }.future-card textarea, .future-card pre { width: 100%; min-height: 110px; margin: 0; border: 1px solid #d8d4c9; background: #eeebe3; padding: 13px; color: #56534c; font: 11px/1.6 ui-monospace, monospace; white-space: pre-wrap; }.future-card button { width: 100%; margin-top: 10px; border: 0; padding: 10px; }.future-card p { color: #716d64; font-size: 11px; line-height: 1.6; }
 .agent-layout { display: grid; grid-template-columns: 320px 1fr; gap: 12px; padding-top: 34px; }.tool-list > p:not(.panel-heading) { display: flex; align-items: center; gap: 13px; margin: 0; padding: 15px 18px; border-bottom: 1px solid #dedbd2; }.tool-list b { padding: 3px 6px; background: #dce8df; color: #4d7059; font-size: 8px; }.tool-list code { font-size: 11px; }.event-stream .empty { margin: 18px; }
+.agent-composer { margin-top: 28px; }
+.agent-composer > label { display: block; padding: 14px 18px 0; color: #66635b; font-size: 11px; letter-spacing: .05em; }
+.agent-composer textarea { display: block; width: 100%; min-height: 112px; resize: vertical; border: 0; outline: 0; background: transparent; padding: 14px 18px 20px; color: #292824; font: 16px/1.7 Georgia, "Songti SC", serif; }
+.agent-composer textarea:focus { box-shadow: inset 3px 0 #547762; }
+.agent-policy-row { display: grid; grid-template-columns: minmax(230px, 1fr) minmax(250px, 1.25fr) auto auto; align-items: end; gap: 12px; border-top: 1px solid #dedbd2; padding: 13px 18px; }
+.agent-policy-row label, .agent-policy-row > div { display: grid; gap: 5px; color: #6c6961; font-size: 10px; }
+.agent-policy-row select { min-height: 35px; border: 1px solid #bbb7ad; background: #f5f2ea; padding: 0 10px; color: #35332e; font-size: 11px; }
+.agent-policy-row code { color: #365440; font: 12px ui-monospace, monospace; }
+.agent-policy-row span { color: #8a867d; font-size: 9px; }
+.agent-policy-row button, .approval-panel button, .agent-result button { min-height: 36px; border: 1px solid transparent; padding: 0 14px; cursor: pointer; font-size: 10px; white-space: nowrap; }
+.agent-policy-row button:active:not(:disabled), .approval-panel button:active, .agent-result button:active:not(:disabled) { transform: translateY(1px); }
+.agent-policy-row button:disabled, .agent-result button:disabled { cursor: not-allowed; opacity: .5; }
+.agent-snapshot { display: grid; grid-template-columns: 180px minmax(250px, .85fr) 1.6fr; margin-top: 12px; border: 1px solid #cbc8be; background: #e8e5dc; }
+.agent-snapshot > div { min-width: 0; padding: 13px 16px; border-right: 1px solid #cbc8be; }
+.agent-snapshot > div:last-child { border-right: 0; }
+.agent-snapshot small, .agent-snapshot strong, .agent-snapshot code { display: block; }
+.agent-snapshot strong { margin-top: 6px; font: 13px Georgia, serif; }
+.agent-snapshot code { margin-top: 6px; overflow: hidden; font-size: 9px; text-overflow: ellipsis; }
+.agent-snapshot p { max-height: 65px; margin: 6px 0 0; overflow: auto; color: #4d4a43; font: 11px/1.55 ui-monospace, monospace; white-space: pre-wrap; }
+.approval-panel { margin-top: 18px; border-color: #b98b58; box-shadow: inset 4px 0 #b87945; }
+.approval-panel > header { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 17px 20px; border-bottom: 1px solid #d8c7ae; background: #f0e6d3; }
+.approval-panel h3 { margin: 5px 0 0; font: 20px Georgia, serif; }
+.approval-panel header code { color: #5f4a32; font-size: 11px; }
+.approval-panel pre { max-height: 300px; margin: 0; overflow: auto; background: #282722; padding: 18px 20px; color: #e9e6dc; font: 11px/1.65 ui-monospace, monospace; white-space: pre-wrap; }
+.approval-panel > p { margin: 0; padding: 12px 20px; color: #665d51; font-size: 11px; }
+.approval-panel > div:last-child { display: flex; justify-content: flex-end; gap: 9px; border-top: 1px solid #dedbd2; padding: 12px 18px; }
+.agent-budget { display: grid; gap: 8px; padding: 16px 18px; color: #77736a; font-size: 9px; }
+.agent-budget span::before { content: "≤"; margin-right: 7px; color: #547762; font-weight: 700; }
+.agent-events { max-height: 540px; overflow: auto; }
+.agent-events details { border-bottom: 1px solid #dedbd2; }
+.agent-events summary { display: grid; grid-template-columns: 1fr auto; gap: 14px; padding: 13px 17px; cursor: pointer; list-style-position: inside; }
+.agent-events summary span { color: #45433d; font-size: 11px; }
+.agent-events summary code { color: #817d74; font-size: 9px; }
+.agent-events pre { max-height: 260px; margin: 0; overflow: auto; border-top: 1px solid #dedbd2; background: #ebe8df; padding: 14px 18px; color: #3e3c36; font: 9.5px/1.6 ui-monospace, monospace; white-space: pre-wrap; word-break: break-word; }
+.agent-result { margin-top: 14px; }
+.agent-result > p:not(.panel-heading) { margin: 0; padding: 22px; font: 16px/1.75 Georgia, "Songti SC", serif; white-space: pre-wrap; }
+.agent-result .reference-list { margin: 0 22px; padding-bottom: 18px; }
+.agent-result footer { display: flex; align-items: center; justify-content: space-between; gap: 20px; border-top: 1px solid #dedbd2; padding: 11px 18px; color: #77736a; font-size: 10px; }
+.agent-result.completed { border-color: #9ab3a0; box-shadow: inset 3px 0 #547762; }
+.agent-result.failed, .agent-result.cancelled { border-color: #c79589; box-shadow: inset 3px 0 #8b483b; }
 
 .ai-conversation-composer { margin-top: 28px; }
 .ai-conversation-composer > label { display: block; padding: 14px 18px 0; color: #66635b; font-size: 11px; letter-spacing: .05em; }
@@ -208,4 +248,9 @@ h1 { margin: 0; font: 600 20px/1 Georgia, "Songti SC", serif; }
   .ai-call-summary > div:nth-child(2) { border-right: 0; }
   .ai-call-summary > div:nth-child(-n+2) { border-bottom: 1px solid #cbc8be; }
   .audit-layout { grid-template-columns: 1fr; }
+  .agent-policy-row { grid-template-columns: 1fr 1fr; }
+  .agent-snapshot { grid-template-columns: 1fr; }
+  .agent-snapshot > div { border-right: 0; border-bottom: 1px solid #cbc8be; }
+  .agent-snapshot > div:last-child { border-bottom: 0; }
+  .agent-layout { grid-template-columns: 1fr; }
 }

@@ -12,13 +12,22 @@ import type {
   DetectedEntity,
   EntityType,
   MemoryFile,
+  MemoryRevertResult,
+  MemoryWritePolicy,
   MemoryOperation,
+  PreparedMemoryWrite,
   PrivacyAnalysis,
   ProtectionPolicy,
   ProtectionPreview,
   RiskLevel
 } from "@brainbuddy/domain";
 import type { ProtectionRequest } from "@brainbuddy/shared-contracts";
+import type {
+  AgentRunDraft,
+  AgentRunResult,
+  AgentRuntimeEvent,
+  ApprovalResolution
+} from "@brainbuddy/agent-runtime";
 
 type DemoPage = "protect" | "save" | "search" | "ai" | "agent";
 
@@ -27,7 +36,7 @@ const demoNavigation: readonly { id: DemoPage; number: string; label: string; st
   { id: "save", number: "02", label: "保存与来源", status: "next" },
   { id: "search", number: "03", label: "本地查询", status: "next" },
   { id: "ai", number: "04", label: "AI 对话", status: "ready" },
-  { id: "agent", number: "05", label: "Agent 实验室", status: "planned" }
+  { id: "agent", number: "05", label: "Agent 实验室", status: "ready" }
 ];
 
 const scenarios = [
@@ -206,7 +215,7 @@ export function App(): JSX.Element {
             <em>{item.status === "ready" ? "可验收" : item.status === "next" ? "本地数据库" : "界面预览"}</em>
           </button>)}
         </nav>
-        <div className="sidebar-foot"><span><i /> 本地运行</span><span>{activePage === "ai" ? "DeepSeek 已接入" : "AI 请求只在 04 发起"}</span><small>{usesPersistentDatabase ? "Source 与凭据已保存到本地 SQLite" : "浏览器验收模式使用会话内存"}</small></div>
+        <div className="sidebar-foot"><span><i /> 本地运行</span><span>{activePage === "ai" || activePage === "agent" ? "DeepSeek 已接入" : "AI 请求仅在 04 / 05 发起"}</span><small>{usesPersistentDatabase ? "Source 与凭据已保存到本地 SQLite" : "浏览器验收模式使用会话内存"}</small></div>
       </aside>
 
       <main className="shell">
@@ -575,12 +584,108 @@ function RawView({ title, value, empty }: { readonly title: string; readonly val
 }
 
 function AgentPreviewPage(): JSX.Element {
+  const [message, setMessage] = useState("找到我保存的 Figma 登录信息，并把可复用的账号和凭据引用更新到 memories/accounts.md。处理完成后告诉我引用了哪些记录。");
+  const [writePolicy, setWritePolicy] = useState<MemoryWritePolicy>("require_approval");
+  const [draft, setDraft] = useState<AgentRunDraft>();
+  const [events, setEvents] = useState<readonly AgentRuntimeEvent[]>([]);
+  const [runId, setRunId] = useState<string>();
+  const [result, setResult] = useState<AgentRunResult>();
+  const [approval, setApproval] = useState<PreparedMemoryWrite>();
+  const [isPreparing, setIsPreparing] = useState(false);
+  const [isRunning, setIsRunning] = useState(false);
+  const [error, setError] = useState<string>();
+  const [revertedRevisionId, setRevertedRevisionId] = useState<string>();
+  const toolCalls = events.filter((event) => event.type === "tool_call").length;
+  const latestChange = [...events].reverse().find((event): event is Extract<AgentRuntimeEvent, { type: "memory_changed" }> => event.type === "memory_changed");
+
+  async function prepare(): Promise<void> {
+    setIsPreparing(true);
+    setError(undefined);
+    setDraft(undefined);
+    setEvents([]);
+    setResult(undefined);
+    setApproval(undefined);
+    setRunId(undefined);
+    setRevertedRevisionId(undefined);
+    try {
+      setDraft(await prepareAgentRun(message, writePolicy));
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setIsPreparing(false);
+    }
+  }
+
+  async function start(): Promise<void> {
+    if (!draft) return;
+    setIsRunning(true);
+    setError(undefined);
+    try {
+      await streamAgentRun(draft.draftId, (event) => {
+        setEvents((current) => [...current, event]);
+        setRunId(event.runId);
+        if (event.type === "approval_required") setApproval(event.prepared);
+        if (event.type === "approved" || event.type === "denied") setApproval(undefined);
+        if (event.type === "agent_completed" || event.type === "agent_failed" || event.type === "agent_cancelled") {
+          setResult(event.result);
+        }
+      });
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setIsRunning(false);
+      setApproval(undefined);
+    }
+  }
+
+  async function decide(decision: "approve" | "deny"): Promise<void> {
+    if (!runId || !approval) return;
+    try {
+      const resolution = await resolveAgentApproval(runId, approval.approvalId, decision);
+      if (resolution.status === "expired") setError("这项审批已经过期，可能是 Run 已结束或被取消。");
+    } catch (cause) {
+      setError(errorMessage(cause));
+    }
+  }
+
+  async function cancel(): Promise<void> {
+    if (!runId) return;
+    await cancelAgentRun(runId);
+  }
+
+  async function undo(): Promise<void> {
+    if (!latestChange) return;
+    try {
+      await revertMemoryRevision(latestChange.revisionId);
+      setRevertedRevisionId(latestChange.revisionId);
+    } catch (cause) {
+      setError(errorMessage(cause));
+    }
+  }
+
   return <>
-    <PageIntro number="05" kicker="UI PREVIEW · NO RUNTIME" title="Agent 实验室" copy="用于观察受控工具调用，而不是让 Agent 直接接触数据库、文件系统或解密密钥。" />
+    <PageIntro number="05" kicker="CONTROLLED AGENT RUNTIME" title="Agent 实验室" copy="让 DeepSeek 在受控工具内搜索、读取和修改本地 Memory。它看不到 Source 原文、凭据明文、数据库连接或通用文件系统。" />
+    <section className="panel agent-composer">
+      <label htmlFor="agent-message">给 Agent 的任务</label>
+      <textarea id="agent-message" value={message} disabled={isRunning} onChange={(event) => { setMessage(event.target.value); setDraft(undefined); }} maxLength={2_000} />
+      <div className="agent-policy-row">
+        <label>Memory 写入策略<select value={writePolicy} disabled={isRunning} onChange={(event) => { setWritePolicy(event.target.value as MemoryWritePolicy); setDraft(undefined); }}><option value="require_approval">写入前需要我批准</option><option value="auto_apply">Agent 可直接写入，可撤销</option></select></label>
+        <div><small>Memory Root</small><code>memories/</code><span>仅限 Markdown，禁止目录逃逸与符号链接</span></div>
+        {!draft ? <button className="secondary-action" type="button" disabled={!message.trim() || isPreparing || isRunning} onClick={() => void prepare()}>{isPreparing ? "正在保护并留档" : "准备 Run"}</button> : <button className="primary-action" type="button" disabled={isRunning} onClick={() => void start()}>开始 Agent</button>}
+        {isRunning && <button className="danger-action" type="button" disabled={!runId} onClick={() => void cancel()}>取消 Run</button>}
+      </div>
+    </section>
+
+    {error && <p className="error" role="alert">{error}</p>}
+    {draft && <section className="agent-snapshot"><div><small>策略快照</small><strong>{draft.writePolicy === "auto_apply" ? "自动写入" : "写入需批准"}</strong></div><div><small>Conversation Source</small><code>{draft.conversationSourceId}</code></div><div><small>模型实际收到的用户消息</small><p>{draft.message}</p></div></section>}
+
+    {approval && <section className="panel approval-panel" aria-live="polite"><header><div><small>同一个 Run 已暂停</small><h3>批准这次精确写入？</h3></div><code>{approval.path}</code></header><pre>{approval.diff}</pre><p>{approval.reason}</p><div><button className="secondary-action" type="button" onClick={() => void decide("deny")}>拒绝写入</button><button className="primary-action" type="button" onClick={() => void decide("approve")}>批准这个 Diff</button></div></section>}
+
     <div className="agent-layout">
-      <section className="panel tool-list"><p className="panel-heading"><span>允许的工具</span><em>0 / 3 次调用</em></p>{["search_memories", "get_memory", "search_credential_metadata"].map((tool) => <p key={tool}><b>允许</b><code>{tool}</code></p>)}</section>
-      <section className="panel event-stream"><p className="panel-heading"><span>运行事件</span><em>等待接入</em></p><div className="empty">未来会在这里逐步展示 started、tool_call、text_delta 和 completed；所有载荷都必须是安全数据。</div></section>
+      <section className="panel tool-list"><p className="panel-heading"><span>工具白名单</span><em>{toolCalls} 次调用</em></p>{["search_local_records", "search_memories", "read_memory", "write_memory", "brainbuddy_finish"].map((tool) => <p key={tool}><b>允许</b><code>{tool}</code></p>)}<div className="agent-budget"><span>最多 3 个工具批次</span><span>最多 8 次本地工具调用</span><span>最多 5 次模型请求</span></div></section>
+      <section className="panel event-stream"><p className="panel-heading"><span>安全事件流</span><em>{isRunning ? approval ? "等待审批" : "运行中" : result ? result.status : "等待开始"}</em></p>{events.length ? <div className="agent-events">{events.map((event, index) => <details key={`${event.type}:${index}`} open={event.type === "tool_call" || event.type === "memory_changed" || event.type === "agent_completed"}><summary><span>{agentEventLabel(event.type)}</span><code>{event.type}</code></summary><pre>{formatJson(event)}</pre></details>)}</div> : <div className="empty">准备后再开始 Run。模型的文字增量、工具参数、工具结果、审批和完成状态会依次出现；事件不会包含解密原文。</div>}</section>
     </div>
+    {result && <section className={`panel agent-result ${result.status}`}><p className="panel-heading"><span>Run 结果</span><em>{result.status}</em></p>{result.status === "completed" ? <><p>{result.message}</p><div className="reference-list"><strong>引用</strong>{result.references.map((reference) => <code key={`${reference.kind}:${reference.id}`}>{reference.kind}: {reference.id}</code>)}</div></> : <p>{result.message}</p>}<footer><span>模型请求 {result.budgets.modelRequestCount} · 工具批次 {result.budgets.toolBatchCount} · 工具调用 {result.budgets.toolCallCount}</span>{latestChange && <button type="button" className="secondary-action" disabled={revertedRevisionId === latestChange.revisionId} onClick={() => void undo()}>{revertedRevisionId === latestChange.revisionId ? "已撤销这次写入" : "撤销最近写入"}</button>}</footer></section>}
   </>;
 }
 
@@ -798,6 +903,93 @@ async function streamAiConversation(
   if (pending.trim()) onEvent((JSON.parse(pending) as { readonly event: AiConversationEvent }).event);
 }
 
+async function prepareAgentRun(text: string, writePolicy: MemoryWritePolicy): Promise<AgentRunDraft> {
+  if (window.brainBuddy) return window.brainBuddy.prepareAgentRun({ text, writePolicy });
+  const submitted = await saveBrowserConversationTurn(text);
+  const allCandidates = await searchDemoSources("");
+  return postJson<AgentRunDraft>("/api/agent/prepare", {
+    message: submitted.preview.protectedContent,
+    conversationSourceId: submitted.sourceId,
+    writePolicy,
+    sources: allCandidates.sources,
+    credentials: allCandidates.credentials
+  });
+}
+
+async function streamAgentRun(
+  draftId: string,
+  onEvent: (event: AgentRuntimeEvent) => void
+): Promise<void> {
+  if (window.brainBuddy) {
+    let runId: string | undefined;
+    const queued: AgentRuntimeEvent[] = [];
+    return new Promise<void>((resolve, reject) => {
+      const handle = (payload: { readonly runId: string; readonly event: AgentRuntimeEvent }) => {
+        if (!runId) queued.push(payload.event);
+        else if (payload.runId === runId) {
+          onEvent(payload.event);
+          if (isTerminalAgentEvent(payload.event)) {
+            unsubscribe();
+            resolve();
+          }
+        }
+      };
+      const unsubscribe = window.brainBuddy!.onAgentRunEvent(handle);
+      void window.brainBuddy!.startAgentRun({ draftId }).then((started) => {
+        runId = started.runId;
+        queued.filter((event) => event.runId === runId).forEach((event) => onEvent(event));
+        const terminal = queued.find((event) => event.runId === runId && isTerminalAgentEvent(event));
+        if (terminal) {
+          unsubscribe();
+          resolve();
+        }
+      }).catch((cause: unknown) => {
+        unsubscribe();
+        reject(cause);
+      });
+    });
+  }
+
+  const response = await fetch("/api/agent/run", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ draftId })
+  });
+  if (!response.ok) throw new Error(await responseError(response));
+  if (!response.body) throw new Error("浏览器没有返回可读取的 Agent 事件流");
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let pending = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    pending += decoder.decode(value, { stream: !done });
+    const lines = pending.split("\n");
+    pending = lines.pop() ?? "";
+    for (const line of lines) if (line.trim()) onEvent((JSON.parse(line) as { readonly event: AgentRuntimeEvent }).event);
+    if (done) break;
+  }
+  if (pending.trim()) onEvent((JSON.parse(pending) as { readonly event: AgentRuntimeEvent }).event);
+}
+
+async function resolveAgentApproval(runId: string, approvalId: string, decision: "approve" | "deny"): Promise<ApprovalResolution> {
+  if (window.brainBuddy) return window.brainBuddy.resolveAgentApproval({ runId, approvalId, decision });
+  return postJson<ApprovalResolution>("/api/agent/approval", { runId, approvalId, decision });
+}
+
+async function cancelAgentRun(runId: string): Promise<void> {
+  if (window.brainBuddy) return window.brainBuddy.cancelAgentRun({ runId });
+  await postJson("/api/agent/cancel", { runId });
+}
+
+async function revertMemoryRevision(revisionId: string): Promise<MemoryRevertResult> {
+  if (window.brainBuddy) return window.brainBuddy.revertMemoryRevision({ revisionId });
+  return postJson<MemoryRevertResult>("/api/agent/revert", { revisionId });
+}
+
+function isTerminalAgentEvent(event: AgentRuntimeEvent): boolean {
+  return event.type === "agent_completed" || event.type === "agent_failed" || event.type === "agent_cancelled";
+}
+
 async function applyMemoryOperation(operation: MemoryOperation): Promise<MemoryFile> {
   if (window.brainBuddy) return window.brainBuddy.applyMemoryOperation({ operation });
   return postJson<MemoryFile>("/api/ai-conversation/apply-memory", { operation });
@@ -857,6 +1049,26 @@ function eventLabel(type: AiConversationEvent["type"]): string {
     tool_call: "收到工具调用",
     completed: "模型调用完成",
     failed: "模型调用失败"
+  } as const)[type];
+}
+
+function agentEventLabel(type: AgentRuntimeEvent["type"]): string {
+  return ({
+    agent_started: "Run 已启动",
+    turn_started: "模型请求开始",
+    model_message_delta: "模型原文片段",
+    model_message: "模型回复原文",
+    tool_call: "模型动作意图",
+    tool_result: "受控工具结果",
+    approval_required: "等待用户审批",
+    approved: "用户已批准",
+    denied: "用户已拒绝",
+    auto_applied: "已自动写入",
+    memory_changed: "Memory 已变更",
+    turn_completed: "模型请求结束",
+    agent_completed: "Run 已完成",
+    agent_failed: "Run 失败",
+    agent_cancelled: "Run 已取消"
   } as const)[type];
 }
 

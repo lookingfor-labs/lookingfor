@@ -1,0 +1,254 @@
+import { describe, expect, it } from "vitest";
+import { createFauxCore, fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
+import { DemoMemorySession } from "@brainbuddy/memory-engine/memory";
+import { createAgentRuntime, type AgentRuntimeEvent, type ProtectedRecordReader } from "./index";
+
+describe("AgentRuntime", () => {
+  it("searches protected local records and finishes with references seen in this Run", async () => {
+    const faux = createFauxCore({ tokensPerSecond: 0 });
+    faux.setResponses([
+      fauxAssistantMessage(fauxToolCall("search_local_records", { query: "Figma", limit: 5 }, { id: "search-1" }), { stopReason: "toolUse" }),
+      fauxAssistantMessage(fauxToolCall("brainbuddy_finish", {
+        message: "Figma 登录信息来自 SOURCE_FIGMA，凭据为 CREDENTIAL_FIGMA。",
+        references: [
+          { kind: "source", id: "SOURCE_FIGMA" },
+          { kind: "credential", id: "CREDENTIAL_FIGMA" }
+        ]
+      }, { id: "finish-1" }), { stopReason: "toolUse" })
+    ]);
+    const runtime = createAgentRuntime({
+      model: faux.getModel(),
+      streamFn: faux.streamSimple,
+      records: protectedRecords(),
+      memories: new DemoMemorySession()
+    });
+    const draft = runtime.prepare({
+      message: "帮我找到 Figma 登录信息",
+      conversationSourceId: "SOURCE_QUERY",
+      writePolicy: "require_approval"
+    });
+    const events: string[] = [];
+
+    const result = await runtime.start(draft.draftId, (event) => events.push(event.type)).done;
+
+    expect(result).toMatchObject({
+      status: "completed",
+      message: "Figma 登录信息来自 SOURCE_FIGMA，凭据为 CREDENTIAL_FIGMA。",
+      references: [
+        { kind: "source", id: "SOURCE_FIGMA" },
+        { kind: "credential", id: "CREDENTIAL_FIGMA" }
+      ],
+      budgets: { toolBatchCount: 1, toolCallCount: 1, modelRequestCount: 2, finishAttemptCount: 1 }
+    });
+    expect(events).toContain("tool_result");
+    expect(events.at(-1)).toBe("agent_completed");
+  });
+
+  it("pauses the same Run for approval before committing an exact Prepared Write", async () => {
+    const memories = new DemoMemorySession();
+    const current = memories.apply({
+      operation: "create",
+      path: "memories/profile.md",
+      content: "Name: Ada",
+      reason: "Create profile"
+    });
+    const faux = createFauxCore({ tokensPerSecond: 0 });
+    faux.setResponses([
+      fauxAssistantMessage(fauxToolCall("write_memory", {
+        operation: "edit",
+        path: current.path,
+        expectedVersion: current.version,
+        edits: [{ type: "insert_after", anchor: "Name: Ada", content: "\nTool: Figma" }],
+        reason: "Remember the design tool"
+      }, { id: "write-1" }), { stopReason: "toolUse" }),
+      fauxAssistantMessage(fauxToolCall("brainbuddy_finish", {
+        message: "Memory updated.",
+        references: [{ kind: "memory", id: current.path }]
+      }, { id: "finish-write" }), { stopReason: "toolUse" })
+    ]);
+    const runtime = createAgentRuntime({ model: faux.getModel(), streamFn: faux.streamSimple, records: protectedRecords(), memories });
+    const draft = runtime.prepare({ message: "Remember that I use Figma", conversationSourceId: "SOURCE_QUERY", writePolicy: "require_approval" });
+    let notifyApproval: ((event: Extract<AgentRuntimeEvent, { type: "approval_required" }>) => void) | undefined;
+    const approval = new Promise<Extract<AgentRuntimeEvent, { type: "approval_required" }>>((resolve) => { notifyApproval = resolve; });
+    const handle = runtime.start(draft.draftId, (event) => {
+      if (event.type === "approval_required") notifyApproval?.(event);
+    });
+
+    const pending = await approval;
+    expect(memories.list()[0]?.content).toBe("Name: Ada");
+    expect(pending.prepared.diff).toContain("+Tool: Figma");
+    expect(await runtime.resolveApproval(handle.runId, pending.prepared.approvalId, "approve")).toEqual({ status: "approved" });
+
+    await expect(handle.done).resolves.toMatchObject({ status: "completed", message: "Memory updated." });
+    expect(memories.list()[0]?.content).toBe("Name: Ada\nTool: Figma");
+    expect(memories.listRevisions().at(-1)).toMatchObject({ runId: handle.runId, toolCallId: "write-1", status: "applied" });
+  });
+
+  it("auto-applies a validated write only when Revisions are available", async () => {
+    const unavailable = new class extends DemoMemorySession {
+      override revisionsAvailable(): boolean { return false; }
+    }();
+    const faux = createFauxCore({ tokensPerSecond: 0 });
+    const blockedRuntime = createAgentRuntime({ model: faux.getModel(), streamFn: faux.streamSimple, records: protectedRecords(), memories: unavailable });
+    expect(() => blockedRuntime.prepare({ message: "Remember this", conversationSourceId: "SOURCE_QUERY", writePolicy: "auto_apply" }))
+      .toThrow("REVISION_STORE_UNAVAILABLE");
+
+    const memories = new DemoMemorySession();
+    const current = memories.apply({ operation: "create", path: "memories/auto.md", content: "A", reason: "Create" });
+    faux.setResponses([
+      fauxAssistantMessage(fauxToolCall("write_memory", {
+        operation: "edit",
+        path: current.path,
+        expectedVersion: current.version,
+        edits: [{ type: "append", content: "B" }],
+        reason: "Append B"
+      }, { id: "auto-write" }), { stopReason: "toolUse" }),
+      fauxAssistantMessage(fauxToolCall("brainbuddy_finish", {
+        message: "Automatically updated.", references: [{ kind: "memory", id: current.path }]
+      }, { id: "auto-finish" }), { stopReason: "toolUse" })
+    ]);
+    const runtime = createAgentRuntime({ model: faux.getModel(), streamFn: faux.streamSimple, records: protectedRecords(), memories });
+    const events: string[] = [];
+    const draft = runtime.prepare({ message: "Append B", conversationSourceId: "SOURCE_QUERY", writePolicy: "auto_apply" });
+
+    await expect(runtime.start(draft.draftId, (event) => events.push(event.type)).done).resolves.toMatchObject({ status: "completed" });
+    expect(memories.list()[0]?.content).toBe("AB");
+    expect(events).toContain("auto_applied");
+    expect(events).not.toContain("approval_required");
+  });
+
+  it("cancels an approval wait and expires a late decision", async () => {
+    const memories = new DemoMemorySession();
+    const current = memories.apply({ operation: "create", path: "memories/cancel.md", content: "before", reason: "Create" });
+    const faux = createFauxCore({ tokensPerSecond: 0 });
+    faux.setResponses([fauxAssistantMessage(fauxToolCall("write_memory", {
+      operation: "edit",
+      path: current.path,
+      expectedVersion: current.version,
+      edits: [{ type: "replace", oldText: "before", newText: "after" }],
+      reason: "Change"
+    }, { id: "cancel-write" }), { stopReason: "toolUse" })]);
+    const runtime = createAgentRuntime({ model: faux.getModel(), streamFn: faux.streamSimple, records: protectedRecords(), memories });
+    const draft = runtime.prepare({ message: "Change it", conversationSourceId: "SOURCE_QUERY", writePolicy: "require_approval" });
+    let notifyApproval: ((event: Extract<AgentRuntimeEvent, { type: "approval_required" }>) => void) | undefined;
+    const approval = new Promise<Extract<AgentRuntimeEvent, { type: "approval_required" }>>((resolve) => { notifyApproval = resolve; });
+    const handle = runtime.start(draft.draftId, (event) => {
+      if (event.type === "approval_required") notifyApproval?.(event);
+    });
+    const pending = await approval;
+
+    await runtime.cancel(handle.runId);
+
+    await expect(handle.done).resolves.toMatchObject({ status: "cancelled", code: "RUN_CANCELLED" });
+    expect(await runtime.resolveApproval(handle.runId, pending.prepared.approvalId, "approve")).toEqual({ status: "expired" });
+    expect(memories.list()[0]?.content).toBe("before");
+  });
+
+  it("rejects a mixed finish batch as a whole before executing another tool", async () => {
+    let searches = 0;
+    const records: ProtectedRecordReader = {
+      search() { searches += 1; return { sources: [], credentials: [], total: 0, truncated: false }; },
+      sourceExists(id) { return id === "SOURCE_QUERY"; },
+      credentialExists() { return false; }
+    };
+    const faux = createFauxCore({ tokensPerSecond: 0 });
+    faux.setResponses([
+      fauxAssistantMessage([
+        fauxToolCall("search_local_records", { query: "secret" }, { id: "mixed-search" }),
+        fauxToolCall("brainbuddy_finish", {
+          message: "Not valid", references: [{ kind: "source", id: "SOURCE_QUERY" }]
+        }, { id: "mixed-finish" })
+      ], { stopReason: "toolUse" }),
+      fauxAssistantMessage(fauxToolCall("brainbuddy_finish", {
+        message: "Finished safely", references: [{ kind: "source", id: "SOURCE_QUERY" }]
+      }, { id: "valid-finish" }), { stopReason: "toolUse" })
+    ]);
+    const runtime = createAgentRuntime({ model: faux.getModel(), streamFn: faux.streamSimple, records, memories: new DemoMemorySession() });
+    const draft = runtime.prepare({ message: "Finish", conversationSourceId: "SOURCE_QUERY", writePolicy: "require_approval" });
+
+    const result = await runtime.start(draft.draftId, () => undefined).done;
+
+    expect(searches).toBe(0);
+    expect(result).toMatchObject({ status: "completed", message: "Finished safely", budgets: { finishAttemptCount: 2 } });
+  });
+
+  it("rejects an unseen reference and exposes only a safe structured error", async () => {
+    const faux = createFauxCore({ tokensPerSecond: 0 });
+    faux.setResponses([
+      fauxAssistantMessage(fauxToolCall("brainbuddy_finish", {
+        message: "Guessed", references: [{ kind: "source", id: "SOURCE_GUESSED" }]
+      }, { id: "guessed-finish" }), { stopReason: "toolUse" }),
+      fauxAssistantMessage(fauxToolCall("brainbuddy_finish", {
+        message: "No guessed references", references: [{ kind: "source", id: "SOURCE_QUERY" }]
+      }, { id: "safe-finish" }), { stopReason: "toolUse" })
+    ]);
+    const runtime = createAgentRuntime({ model: faux.getModel(), streamFn: faux.streamSimple, records: protectedRecords(), memories: new DemoMemorySession() });
+    const draft = runtime.prepare({ message: "Answer", conversationSourceId: "SOURCE_QUERY", writePolicy: "require_approval" });
+    const errors: unknown[] = [];
+
+    const result = await runtime.start(draft.draftId, (event) => {
+      if (event.type === "tool_result" && event.isError) errors.push(event.result);
+    }).done;
+
+    expect(result).toMatchObject({ status: "completed", message: "No guessed references" });
+    expect(errors).toContainEqual({ code: "REFERENCE_NOT_SEEN", message: "The reference was not seen in this Run", retryable: true });
+  });
+
+  it("redacts unexpected local exceptions before returning them to the model or UI", async () => {
+    const faux = createFauxCore({ tokensPerSecond: 0 });
+    faux.setResponses([
+      fauxAssistantMessage(fauxToolCall("search_local_records", { query: "leak", limit: 5 }, { id: "failing-search" }), { stopReason: "toolUse" }),
+      fauxAssistantMessage(fauxToolCall("brainbuddy_finish", {
+        message: "Search failed safely", references: [{ kind: "source", id: "SOURCE_QUERY" }]
+      }, { id: "finish-after-error" }), { stopReason: "toolUse" })
+    ]);
+    const records: ProtectedRecordReader = {
+      search() { throw new Error("database row contains PLAINTEXT_PASSWORD"); },
+      sourceExists(id) { return id === "SOURCE_QUERY"; },
+      credentialExists() { return false; }
+    };
+    const runtime = createAgentRuntime({ model: faux.getModel(), streamFn: faux.streamSimple, records, memories: new DemoMemorySession() });
+    const draft = runtime.prepare({ message: "Search", conversationSourceId: "SOURCE_QUERY", writePolicy: "require_approval" });
+    const events: AgentRuntimeEvent[] = [];
+
+    const result = await runtime.start(draft.draftId, (event) => events.push(event)).done;
+    const serialized = JSON.stringify(events);
+
+    expect(result).toMatchObject({ status: "completed", message: "Search failed safely" });
+    expect(serialized).not.toContain("PLAINTEXT_PASSWORD");
+    expect(serialized).toContain("TOOL_FAILED");
+  });
+});
+
+function protectedRecords(): ProtectedRecordReader {
+  return {
+    search(query, limit) {
+      expect(query).toBe("Figma");
+      expect(limit).toBe(5);
+      return {
+        sources: [{
+          sourceId: "SOURCE_FIGMA",
+          kind: "capture",
+          protectedContent: "Figma credential [CREDENTIAL:CREDENTIAL_FIGMA]",
+          credentialIds: ["CREDENTIAL_FIGMA"],
+          savedAt: "2026-08-08T08:00:00.000Z"
+        }],
+        credentials: [{
+          credentialId: "CREDENTIAL_FIGMA",
+          entityType: "password",
+          maskedValue: "••••••••",
+          sourceIds: ["SOURCE_FIGMA"],
+          savedAt: "2026-08-08T08:00:00.000Z"
+        }],
+        total: 2,
+        truncated: false
+      };
+    },
+    sourceExists(sourceId) {
+      return sourceId === "SOURCE_QUERY" || sourceId === "SOURCE_FIGMA";
+    },
+    credentialExists(credentialId) {
+      return credentialId === "CREDENTIAL_FIGMA";
+    }
+  };
+}
