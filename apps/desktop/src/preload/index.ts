@@ -12,6 +12,7 @@ import {
   PREVIEW_PROTECTION_CHANNEL,
   REVEAL_DEMO_SOURCE_CHANNEL,
   RESOLVE_AGENT_APPROVAL_CHANNEL,
+  RESET_MEMORY_CONTEXT_CHANNEL,
   REVERT_MEMORY_REVISION_CHANNEL,
   SEARCH_DEMO_SOURCES_CHANNEL,
   SAVE_DEMO_CANDIDATE_CHANNEL,
@@ -43,7 +44,8 @@ const api: BrainBuddyApi = {
     ipcRenderer.on(AGENT_RUN_EVENT_CHANNEL, wrapped);
     return () => ipcRenderer.removeListener(AGENT_RUN_EVENT_CHANNEL, wrapped);
   },
-  revertMemoryRevision: (request) => ipcRenderer.invoke(REVERT_MEMORY_REVISION_CHANNEL, request)
+  revertMemoryRevision: (request) => ipcRenderer.invoke(REVERT_MEMORY_REVISION_CHANNEL, request),
+  resetMemoryTestContext: () => ipcRenderer.invoke(RESET_MEMORY_CONTEXT_CHANNEL)
 };
 
 contextBridge.exposeInMainWorld("brainBuddy", api);

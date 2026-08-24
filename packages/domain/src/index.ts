@@ -262,6 +262,11 @@ export interface MemoryRevertResult {
   readonly memory: MemoryFile | null;
 }
 
+export interface MemoryResetResult {
+  readonly deletedMemoryCount: number;
+  readonly deletedRevisionCount: number;
+}
+
 export interface AiConversationResponse {
   readonly message: string;
   readonly references: readonly {

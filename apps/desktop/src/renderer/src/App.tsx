@@ -12,6 +12,7 @@ import type {
   DetectedEntity,
   EntityType,
   MemoryFile,
+  MemoryResetResult,
   MemoryRevertResult,
   MemoryWritePolicy,
   MemoryOperation,
@@ -595,6 +596,9 @@ function AgentPreviewPage(): JSX.Element {
   const [isRunning, setIsRunning] = useState(false);
   const [error, setError] = useState<string>();
   const [revertedRevisionId, setRevertedRevisionId] = useState<string>();
+  const [showResetConfirmation, setShowResetConfirmation] = useState(false);
+  const [isResettingMemory, setIsResettingMemory] = useState(false);
+  const [resetResult, setResetResult] = useState<MemoryResetResult>();
   const toolCalls = events.filter((event) => event.type === "tool_call").length;
   const latestChange = [...events].reverse().find((event): event is Extract<AgentRuntimeEvent, { type: "memory_changed" }> => event.type === "memory_changed");
 
@@ -663,6 +667,26 @@ function AgentPreviewPage(): JSX.Element {
     }
   }
 
+  async function resetMemoryContext(): Promise<void> {
+    setIsResettingMemory(true);
+    setError(undefined);
+    try {
+      const nextResult = await requestMemoryContextReset();
+      setResetResult(nextResult);
+      setShowResetConfirmation(false);
+      setDraft(undefined);
+      setEvents([]);
+      setRunId(undefined);
+      setResult(undefined);
+      setApproval(undefined);
+      setRevertedRevisionId(undefined);
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setIsResettingMemory(false);
+    }
+  }
+
   return <>
     <PageIntro number="05" kicker="CONTROLLED AGENT RUNTIME" title="Agent 实验室" copy="让 DeepSeek 在受控工具内搜索、读取和修改本地 Memory。它看不到 Source 原文、凭据明文、数据库连接或通用文件系统。" />
     <section className="panel agent-composer">
@@ -674,6 +698,21 @@ function AgentPreviewPage(): JSX.Element {
         {!draft ? <button className="secondary-action" type="button" disabled={!message.trim() || isPreparing || isRunning} onClick={() => void prepare()}>{isPreparing ? "正在保护并留档" : "准备 Run"}</button> : <button className="primary-action" type="button" disabled={isRunning} onClick={() => void start()}>开始 Agent</button>}
         {isRunning && <button className="danger-action" type="button" disabled={!runId} onClick={() => void cancel()}>取消 Run</button>}
       </div>
+    </section>
+
+    <section className={`panel memory-reset-panel${showResetConfirmation ? " confirming" : ""}`} aria-live="polite">
+      <div>
+        <small>测试上下文</small>
+        <strong>{showResetConfirmation ? "确定重置全部 Memory？" : "重置 Memory 测试上下文"}</strong>
+        <p>{showResetConfirmation
+          ? "将清空 memories/ 中的全部 Markdown 和对应 Revision。Source、Credential 与 Agent Run 调试记录会保留。"
+          : resetResult
+            ? `上次已清空 ${resetResult.deletedMemoryCount} 个 Memory、${resetResult.deletedRevisionCount} 条 Revision。`
+            : "用于重新开始多轮写入与查询验收，不影响本地 Source 和凭据。"}</p>
+      </div>
+      {showResetConfirmation
+        ? <div className="memory-reset-actions"><button className="secondary-action" type="button" disabled={isResettingMemory} onClick={() => setShowResetConfirmation(false)}>保留当前上下文</button><button className="danger-action" type="button" disabled={isResettingMemory || isRunning} onClick={() => void resetMemoryContext()}>{isResettingMemory ? "正在重置" : "确认清空 Memory"}</button></div>
+        : <button className="secondary-action" type="button" disabled={isRunning || isPreparing || isResettingMemory} onClick={() => { setResetResult(undefined); setShowResetConfirmation(true); }}>重置…</button>}
     </section>
 
     {error && <p className="error" role="alert">{error}</p>}
@@ -984,6 +1023,11 @@ async function cancelAgentRun(runId: string): Promise<void> {
 async function revertMemoryRevision(revisionId: string): Promise<MemoryRevertResult> {
   if (window.brainBuddy) return window.brainBuddy.revertMemoryRevision({ revisionId });
   return postJson<MemoryRevertResult>("/api/agent/revert", { revisionId });
+}
+
+async function requestMemoryContextReset(): Promise<MemoryResetResult> {
+  if (window.brainBuddy) return window.brainBuddy.resetMemoryTestContext();
+  return postJson<MemoryResetResult>("/api/agent/reset-memory", {});
 }
 
 function isTerminalAgentEvent(event: AgentRuntimeEvent): boolean {

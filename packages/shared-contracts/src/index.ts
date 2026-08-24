@@ -8,6 +8,7 @@ import type {
   PrivacyAnalysis,
   ProtectionPreview,
   MemoryFile,
+  MemoryResetResult,
   MemoryRevertResult
 } from "@brainbuddy/domain";
 import type {
@@ -32,6 +33,7 @@ export const RESOLVE_AGENT_APPROVAL_CHANNEL = "agent:resolve-approval";
 export const CANCEL_AGENT_RUN_CHANNEL = "agent:cancel-run";
 export const AGENT_RUN_EVENT_CHANNEL = "agent:run-event";
 export const REVERT_MEMORY_REVISION_CHANNEL = "memory:revert-revision";
+export const RESET_MEMORY_CONTEXT_CHANNEL = "memory:reset-test-context";
 
 export const AnalyzeInputRequestSchema = z.object({
   text: z.string().max(20_000)
@@ -142,4 +144,5 @@ export interface BrainBuddyApi {
   cancelAgentRun(request: CancelAgentRunRequest): Promise<void>;
   onAgentRunEvent(listener: (event: AgentRunEventPayload) => void): () => void;
   revertMemoryRevision(request: RevertMemoryRevisionRequest): Promise<MemoryRevertResult>;
+  resetMemoryTestContext(): Promise<MemoryResetResult>;
 }

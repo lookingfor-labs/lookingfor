@@ -18,6 +18,7 @@ import type {
   MemoryEdit,
   MemoryFile,
   MemoryOperation,
+  MemoryResetResult,
   MemoryRevertResult,
   MemoryRevision,
   MemoryWriteRequest,
@@ -30,6 +31,7 @@ export interface MemoryStore {
   prepare(request: MemoryWriteRequest): PreparedMemoryWrite;
   commit(prepared: PreparedMemoryWrite, metadata: MemoryCommitMetadata): MemoryCommitResult;
   revert(revisionId: string): MemoryRevertResult;
+  reset(): MemoryResetResult;
   listRevisions(): readonly MemoryRevision[];
   revisionsAvailable(): boolean;
 }
@@ -182,6 +184,17 @@ export class FileMemoryStore implements MemoryStore {
     this.#ledger.revisions[this.#ledger.revisions.length - 1] = { ...revertRevision, status: "applied" };
     writeLedger(this.#ledgerPath, this.#ledger);
     return { path: revision.path, deleted: reverted === null, memory: reverted };
+  }
+
+  reset(): MemoryResetResult {
+    const files = listMarkdownFiles(this.#rootDirectory);
+    const deletedRevisionCount = this.#ledger.revisions.length;
+    files.forEach((filePath) => unlinkSync(filePath));
+    this.#ledger.sequence = 0;
+    this.#ledger.pathRevisions = {};
+    this.#ledger.revisions = [];
+    writeLedger(this.#ledgerPath, this.#ledger);
+    return { deletedMemoryCount: files.length, deletedRevisionCount };
   }
 
   listRevisions(): readonly MemoryRevision[] {
@@ -357,6 +370,15 @@ export class DemoMemorySession implements MemoryStore {
     };
     this.#revisions.set(revertRevision.revisionId, revertRevision);
     return { path: revision.path, deleted: reverted === null, memory: reverted };
+  }
+
+  reset(): MemoryResetResult {
+    const deletedMemoryCount = this.#files.size;
+    const deletedRevisionCount = this.#revisions.size;
+    this.#files.clear();
+    this.#revisions.clear();
+    this.#revisionSequence = 0;
+    return { deletedMemoryCount, deletedRevisionCount };
   }
 
   listRevisions(): readonly MemoryRevision[] {

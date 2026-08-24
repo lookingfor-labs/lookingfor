@@ -121,6 +121,19 @@ describe("MemoryStore", () => {
       .toThrow("Memory changed");
   });
 
+  it("resets all in-memory files and Revisions", () => {
+    const session = new DemoMemorySession();
+    session.apply({ operation: "create", path: "memories/one.md", content: "One", reason: "Create one" });
+    session.apply({ operation: "create", path: "memories/two.md", content: "Two", reason: "Create two" });
+
+    expect(session.reset()).toEqual({ deletedMemoryCount: 2, deletedRevisionCount: 2 });
+    expect(session.list()).toEqual([]);
+    expect(session.listRevisions()).toEqual([]);
+
+    const recreated = session.apply({ operation: "create", path: "memories/one.md", content: "Fresh", reason: "Recreate" });
+    expect(recreated.version).toMatch(/^1:/u);
+  });
+
   it("persists plain Markdown through the file adapter", () => {
     const directory = mkdtempSync(join(tmpdir(), "brainbuddy-memory-"));
     temporaryDirectories.push(directory);
@@ -174,6 +187,26 @@ describe("MemoryStore", () => {
       edits: [{ type: "replace", oldText: "Figma", newText: "Penpot" }],
       reason: "Use current content"
     }), { runId: "run-3", toolCallId: "tool-3", writePolicy: "auto_apply" })).toThrow("Memory changed");
+  });
+
+  it("resets persisted Markdown files and the Revision ledger", () => {
+    const directory = mkdtempSync(join(tmpdir(), "brainbuddy-memory-"));
+    const revisionDirectory = mkdtempSync(join(tmpdir(), "brainbuddy-revisions-"));
+    temporaryDirectories.push(directory, revisionDirectory);
+    const options = { rootDirectory: directory, revisionDirectory };
+    const store = new FileMemoryStore(options);
+    store.apply({ operation: "create", path: "memories/one.md", content: "One", reason: "Create one" });
+    store.apply({ operation: "create", path: "memories/nested/two.md", content: "Two", reason: "Create two" });
+
+    expect(store.reset()).toEqual({ deletedMemoryCount: 2, deletedRevisionCount: 2 });
+    expect(store.list()).toEqual([]);
+    expect(store.listRevisions()).toEqual([]);
+
+    const reopened = new FileMemoryStore(options);
+    expect(reopened.list()).toEqual([]);
+    expect(reopened.listRevisions()).toEqual([]);
+    expect(reopened.apply({ operation: "create", path: "memories/one.md", content: "Fresh", reason: "Recreate" }).version)
+      .toMatch(/^1:/u);
   });
 
   it("rejects Memory paths whose parent is a symbolic link", () => {

@@ -95,6 +95,7 @@ export function aiConversationMiddleware(options: {
   const drafts = new Map<string, AiConversationDraft>();
   const memories = new DemoMemorySession();
   const records = new BrowserProtectedRecords();
+  const activeAgentRuns = new Set<string>();
   const getEngine = () => engine ??= createDeepSeekAiConversationEngine(options);
   const getAgentRuntime = () => agentRuntime ??= createDeepSeekAgentRuntime({
     apiKey: options.apiKey,
@@ -158,9 +159,14 @@ export function aiConversationMiddleware(options: {
               connection: "keep-alive"
             });
             const handle = getAgentRuntime().start(draftId, (event) => response.write(`${JSON.stringify({ runId: event.runId, event })}\n`));
+            activeAgentRuns.add(handle.runId);
             request.once("aborted", () => void getAgentRuntime().cancel(handle.runId));
-            await handle.done;
-            return response.end();
+            try {
+              await handle.done;
+              return response.end();
+            } finally {
+              activeAgentRuns.delete(handle.runId);
+            }
           }
           if (request.url === "/api/agent/approval") {
             const input = z.object({
@@ -178,6 +184,11 @@ export function aiConversationMiddleware(options: {
           if (request.url === "/api/agent/revert") {
             const { revisionId } = z.object({ revisionId: z.string().uuid() }).parse(await readJson(request));
             return sendJson(response, 200, memories.revert(revisionId));
+          }
+          if (request.url === "/api/agent/reset-memory") {
+            if (activeAgentRuns.size) return sendJson(response, 409, { error: "Memory 正在被 Agent Run 使用，请先等待完成或取消 Run。" });
+            drafts.clear();
+            return sendJson(response, 200, memories.reset());
           }
           return sendJson(response, 404, { error: "Not found" });
         } catch (error) {

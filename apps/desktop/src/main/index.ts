@@ -32,6 +32,7 @@ import {
   ProtectionRequestSchema,
   REVEAL_DEMO_SOURCE_CHANNEL,
   RESOLVE_AGENT_APPROVAL_CHANNEL,
+  RESET_MEMORY_CONTEXT_CHANNEL,
   ResolveAgentApprovalRequestSchema,
   REVERT_MEMORY_REVISION_CHANNEL,
   RevertMemoryRevisionRequestSchema,
@@ -287,6 +288,11 @@ app.whenReady().then(() => {
   ipcMain.handle(REVERT_MEMORY_REVISION_CHANNEL, (_event, request: unknown) => {
     const { revisionId } = RevertMemoryRevisionRequestSchema.parse(request);
     return memoryStore!.revert(revisionId);
+  });
+  ipcMain.handle(RESET_MEMORY_CONTEXT_CHANNEL, () => {
+    if (aiRuns.size || agentRuns.size) throw new Error("MEMORY_RESET_BLOCKED: A Run is still active");
+    aiDrafts.clear();
+    return memoryStore!.reset();
   });
   createWindow();
 
