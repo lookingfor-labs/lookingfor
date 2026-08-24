@@ -5,6 +5,7 @@ import { z } from "zod";
 import { createDeepSeekAiConversationEngine, type AiConversationEngine } from "@brainbuddy/ai-conversation";
 import {
   createDeepSeekAgentRuntime,
+  createFileAgentRunRecorder,
   type AgentRuntime,
   type ProtectedRecordReader
 } from "@brainbuddy/agent-runtime";
@@ -84,14 +85,26 @@ class BrowserProtectedRecords implements ProtectedRecordReader {
   credentialExists(credentialId: string): boolean { return this.#credentials.has(credentialId); }
 }
 
-export function aiConversationMiddleware(options: { readonly apiKey: string; readonly modelId?: string }): Plugin {
+export function aiConversationMiddleware(options: {
+  readonly apiKey: string;
+  readonly modelId?: string;
+  readonly agentRunLogDirectory?: string;
+}): Plugin {
   let engine: AiConversationEngine | undefined;
   let agentRuntime: AgentRuntime | undefined;
   const drafts = new Map<string, AiConversationDraft>();
   const memories = new DemoMemorySession();
   const records = new BrowserProtectedRecords();
   const getEngine = () => engine ??= createDeepSeekAiConversationEngine(options);
-  const getAgentRuntime = () => agentRuntime ??= createDeepSeekAgentRuntime({ ...options, records, memories });
+  const getAgentRuntime = () => agentRuntime ??= createDeepSeekAgentRuntime({
+    apiKey: options.apiKey,
+    ...(options.modelId ? { modelId: options.modelId } : {}),
+    records,
+    memories,
+    ...(options.agentRunLogDirectory
+      ? { recorder: createFileAgentRunRecorder({ directory: options.agentRunLogDirectory }) }
+      : {})
+  });
 
   return {
     name: "brainbuddy-ai-conversation-dev-server",

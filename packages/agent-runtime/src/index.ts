@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { appendFileSync, chmodSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
 import { Agent, type AgentEvent, type AgentTool, type StreamFn } from "@earendil-works/pi-agent-core";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { createModels } from "@earendil-works/pi-ai";
@@ -103,6 +105,7 @@ export type AgentRunResult =
 export type AgentRuntimeEvent =
   | { readonly type: "agent_started"; readonly runId: string }
   | { readonly type: "turn_started"; readonly runId: string; readonly modelRequestCount: number }
+  | { readonly type: "provider_payload"; readonly runId: string; readonly payload: unknown }
   | { readonly type: "model_message_delta"; readonly runId: string; readonly delta: string }
   | { readonly type: "model_message"; readonly runId: string; readonly message: unknown }
   | { readonly type: "tool_call"; readonly runId: string; readonly toolCallId: string; readonly toolName: string; readonly args: unknown }
@@ -117,6 +120,26 @@ export type AgentRuntimeEvent =
 export interface AgentRunHandle {
   readonly runId: string;
   readonly done: Promise<AgentRunResult>;
+}
+
+export interface AgentRunAuditSnapshot {
+  readonly runId: string;
+  readonly recordedAt: string;
+  readonly provider: string;
+  readonly model: string;
+  readonly systemPrompt: string;
+  readonly draft: AgentRunDraft;
+  readonly limits: {
+    readonly localToolBatches: number;
+    readonly localToolCalls: number;
+    readonly modelRequests: number;
+    readonly finishAttempts: number;
+  };
+}
+
+export interface AgentRunRecorder {
+  start(snapshot: AgentRunAuditSnapshot): void;
+  record(recordedAt: string, event: AgentRuntimeEvent): void;
 }
 
 export interface ApprovalResolution {
@@ -154,6 +177,30 @@ export interface CreateAgentRuntimeOptions {
   readonly now?: () => Date;
   readonly idFactory?: () => string;
   readonly getApiKey?: (provider: string) => string | undefined;
+  readonly recorder?: AgentRunRecorder;
+}
+
+export function createFileAgentRunRecorder(options: {
+  readonly directory: string;
+  readonly now?: () => Date;
+}): AgentRunRecorder {
+  const now = options.now ?? (() => new Date());
+  mkdirSync(options.directory, { recursive: true, mode: 0o700 });
+  chmodSync(options.directory, 0o700);
+  const append = (runId: string, value: unknown) => {
+    if (!/^[a-zA-Z0-9_-]+$/u.test(runId)) throw new Error("Agent Run ID is not safe for a record path");
+    const path = join(options.directory, `${runId}.jsonl`);
+    appendFileSync(path, `${JSON.stringify(value)}\n`, { encoding: "utf8", mode: 0o600 });
+    chmodSync(path, 0o600);
+  };
+  return {
+    start(snapshot) {
+      append(snapshot.runId, { type: "run_snapshot", ...snapshot });
+    },
+    record(recordedAt, event) {
+      append(event.runId, { type: "event", recordedAt: recordedAt || now().toISOString(), event });
+    }
+  };
 }
 
 export interface CreateDeepSeekAgentRuntimeOptions {
@@ -163,6 +210,7 @@ export interface CreateDeepSeekAgentRuntimeOptions {
   readonly memories: MemoryStore;
   readonly now?: () => Date;
   readonly idFactory?: () => string;
+  readonly recorder?: AgentRunRecorder;
 }
 
 interface MutableBudgets {
@@ -262,6 +310,24 @@ export function createAgentRuntime(options: CreateAgentRuntimeOptions): AgentRun
       if (!draft) throw new Error("Agent Run draft was not found or has expired");
       drafts.delete(draftId);
       const runId = idFactory();
+      safelyRecord(() => options.recorder?.start({
+        runId,
+        recordedAt: now().toISOString(),
+        provider: options.model.provider,
+        model: options.model.id,
+        systemPrompt,
+        draft,
+        limits: {
+          localToolBatches: MAX_LOCAL_TOOL_BATCHES,
+          localToolCalls: MAX_LOCAL_TOOL_CALLS,
+          modelRequests: MAX_MODEL_REQUESTS,
+          finishAttempts: MAX_FINISH_ATTEMPTS
+        }
+      }));
+      const emit = (event: AgentRuntimeEvent) => {
+        onEvent(event);
+        safelyRecord(() => options.recorder?.record(now().toISOString(), event));
+      };
       const state: RunState = {
         runId,
         draft,
@@ -270,7 +336,7 @@ export function createAgentRuntime(options: CreateAgentRuntimeOptions): AgentRun
         seenMemoryPaths: new Set(),
         countedBatches: new Set(),
         budgets: { toolBatchCount: 0, toolCallCount: 0, modelRequestCount: 0, finishAttemptCount: 0 },
-        emit: onEvent,
+        emit,
         cancelled: false
       };
       runs.set(runId, state);
@@ -291,6 +357,14 @@ export function createAgentRuntime(options: CreateAgentRuntimeOptions): AgentRun
   };
 }
 
+function safelyRecord(record: () => void): void {
+  try {
+    record();
+  } catch {
+    // Debug recording must never change Agent Run behavior.
+  }
+}
+
 export function createDeepSeekAgentRuntime(options: CreateDeepSeekAgentRuntimeOptions): AgentRuntime {
   if (!options.apiKey.trim()) throw new Error("SECRET_DEEPSEEK_API_KEY is not configured");
   const models = createModels();
@@ -305,6 +379,7 @@ export function createDeepSeekAgentRuntime(options: CreateDeepSeekAgentRuntimeOp
     getApiKey: (providerId) => providerId === provider.id ? options.apiKey : undefined,
     records: options.records,
     memories: options.memories,
+    ...(options.recorder ? { recorder: options.recorder } : {}),
     ...(options.now ? { now: options.now } : {}),
     ...(options.idFactory ? { idFactory: options.idFactory } : {})
   });
@@ -316,6 +391,7 @@ async function runAgent(state: RunState, options: CreateAgentRuntimeOptions, app
     initialState: { systemPrompt, model: options.model, tools },
     streamFn: options.streamFn,
     ...(options.getApiKey ? { getApiKey: options.getApiKey } : {}),
+    onPayload: (payload) => state.emit({ type: "provider_payload", runId: state.runId, payload: cloneSafe(payload) }),
     toolExecution: "sequential",
     beforeToolCall: async ({ assistantMessage }) => preflightBatch(state, assistantMessage),
     afterToolCall: async ({ result, isError }) => {

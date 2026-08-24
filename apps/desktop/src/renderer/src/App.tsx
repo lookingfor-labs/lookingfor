@@ -685,7 +685,7 @@ function AgentPreviewPage(): JSX.Element {
       <section className="panel tool-list"><p className="panel-heading"><span>工具白名单</span><em>{toolCalls} 次调用</em></p>{["search_local_records", "search_memories", "read_memory", "write_memory", "brainbuddy_finish"].map((tool) => <p key={tool}><b>允许</b><code>{tool}</code></p>)}<div className="agent-budget"><span>最多 3 个工具批次</span><span>最多 8 次本地工具调用</span><span>最多 5 次模型请求</span></div></section>
       <section className="panel event-stream"><p className="panel-heading"><span>安全事件流</span><em>{isRunning ? approval ? "等待审批" : "运行中" : result ? result.status : "等待开始"}</em></p>{events.length ? <div className="agent-events">{events.map((event, index) => <details key={`${event.type}:${index}`} open={event.type === "tool_call" || event.type === "memory_changed" || event.type === "agent_completed"}><summary><span>{agentEventLabel(event.type)}</span><code>{event.type}</code></summary><pre>{formatJson(event)}</pre></details>)}</div> : <div className="empty">准备后再开始 Run。模型的文字增量、工具参数、工具结果、审批和完成状态会依次出现；事件不会包含解密原文。</div>}</section>
     </div>
-    {result && <section className={`panel agent-result ${result.status}`}><p className="panel-heading"><span>Run 结果</span><em>{result.status}</em></p>{result.status === "completed" ? <><p>{result.message}</p><div className="reference-list"><strong>引用</strong>{result.references.map((reference) => <code key={`${reference.kind}:${reference.id}`}>{reference.kind}: {reference.id}</code>)}</div></> : <p>{result.message}</p>}<footer><span>模型请求 {result.budgets.modelRequestCount} · 工具批次 {result.budgets.toolBatchCount} · 工具调用 {result.budgets.toolCallCount}</span>{latestChange && <button type="button" className="secondary-action" disabled={revertedRevisionId === latestChange.revisionId} onClick={() => void undo()}>{revertedRevisionId === latestChange.revisionId ? "已撤销这次写入" : "撤销最近写入"}</button>}</footer></section>}
+    {result && <section className={`panel agent-result ${result.status}`}><p className="panel-heading"><span>Run 结果</span><em>{result.status}</em></p>{result.status === "completed" ? <><p>{result.message}</p><div className="reference-list"><strong>引用</strong>{result.references.map((reference) => <code key={`${reference.kind}:${reference.id}`}>{reference.kind}: {reference.id}</code>)}</div></> : <p>{result.message}</p>}<footer><span>{runId && <>Run <code>{runId}</code> · </>}模型请求 {result.budgets.modelRequestCount} · 工具批次 {result.budgets.toolBatchCount} · 工具调用 {result.budgets.toolCallCount}</span>{latestChange && <button type="button" className="secondary-action" disabled={revertedRevisionId === latestChange.revisionId} onClick={() => void undo()}>{revertedRevisionId === latestChange.revisionId ? "已撤销这次写入" : "撤销最近写入"}</button>}</footer></section>}
   </>;
 }
 
@@ -1056,6 +1056,7 @@ function agentEventLabel(type: AgentRuntimeEvent["type"]): string {
   return ({
     agent_started: "Run 已启动",
     turn_started: "模型请求开始",
+    provider_payload: "DeepSeek 请求原文",
     model_message_delta: "模型原文片段",
     model_message: "模型回复原文",
     tool_call: "模型动作意图",

@@ -6,6 +6,7 @@ import { config as loadDotEnv } from "dotenv";
 import { createDeepSeekAiConversationEngine, type AiConversationEngine } from "@brainbuddy/ai-conversation";
 import {
   createDeepSeekAgentRuntime,
+  createFileAgentRunRecorder,
   type AgentRuntime,
   type ProtectedRecordReader
 } from "@brainbuddy/agent-runtime";
@@ -95,7 +96,8 @@ function getAgentRuntime(): AgentRuntime {
     apiKey: process.env.SECRET_DEEPSEEK_API_KEY ?? "",
     ...(process.env.SECRET_DEEPSEEK_MODEL ? { modelId: process.env.SECRET_DEEPSEEK_MODEL } : {}),
     records,
-    memories: memoryStore
+    memories: memoryStore,
+    recorder: createFileAgentRunRecorder({ directory: join(app.getPath("userData"), "agent-runs") })
   });
   return agentRuntime;
 }

@@ -442,6 +442,19 @@ Run 状态至少包括：`RunningModel`、`RunningTool`、`AwaitingApproval`、`
 - 批准、拒绝或撤销操作；
 - 最终工具结果。
 
+### 8.5 安全 Run 调试记录
+
+每次真正启动 Agent Run 后按 Run ID 写入独立 JSONL，记录：
+
+- Run 快照：受保护输入、Conversation Source ID、写入策略、模型、系统提示与预算上限；
+- DeepSeek provider payload，不包含请求头与 API key；
+- 模型安全回复、工具参数、安全工具结果、审批、Memory 变更、预算与终态；
+- 每条记录的本地时间。
+
+记录文件权限为 `0600`，目录权限为 `0700`。记录失败不能中断 Agent Run。Source 原文、Credential 明文、数据库密钥和 API key 不得进入记录。
+
+开发环境稳定目录为 `.it-runner/logs/desktop-dev/agent-runs/<Run ID>.jsonl`；Electron 环境目录为应用 `userData/agent-runs/`。页面最终结果展示 Run ID，供后续定位文件。
+
 ## 9. 安全不变量
 
 以下条件必须由运行时保证，不能只依赖系统提示词：
@@ -620,4 +633,4 @@ interface SafeToolError {
 7. DeepSeek function schema 顶层统一为 object，create/edit 的条件约束由 Runtime 二次校验；
 8. 创建和编辑产生的 Revision 都可撤销；撤销创建会删除对应 Memory 文件。
 
-当前实现验证基线：仓库测试 50 项通过，所有 workspace 类型检查通过，桌面生产构建通过，真实 DeepSeek 只读 Agent Run 完成并产生 `brainbuddy_finish`。写入审批与自动撤销通过伪模型端到端测试，保留给页面手动验收。
+当前实现验证基线：仓库测试 52 项通过，所有 workspace 类型检查通过，桌面生产构建通过，真实 DeepSeek 只读 Agent Run 完成并产生 `brainbuddy_finish`。写入审批与自动撤销通过伪模型端到端测试，保留给页面手动验收。

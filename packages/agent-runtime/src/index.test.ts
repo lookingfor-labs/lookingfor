@@ -1,9 +1,82 @@
 import { describe, expect, it } from "vitest";
+import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createFauxCore, fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { DemoMemorySession } from "@brainbuddy/memory-engine/memory";
-import { createAgentRuntime, type AgentRuntimeEvent, type ProtectedRecordReader } from "./index";
+import {
+  createAgentRuntime,
+  createFileAgentRunRecorder,
+  type AgentRuntimeEvent,
+  type ProtectedRecordReader
+} from "./index";
 
 describe("AgentRuntime", () => {
+  it("persists one safe JSONL audit record for a complete Run", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "brainbuddy-agent-runs-"));
+    try {
+      const faux = createFauxCore({ tokensPerSecond: 0 });
+      faux.setResponses([fauxAssistantMessage(fauxToolCall("brainbuddy_finish", {
+        message: "No matching record was found.",
+        references: [{ kind: "source", id: "SOURCE_QUERY" }]
+      }, { id: "audit-finish" }), { stopReason: "toolUse" })]);
+      const runtime = createAgentRuntime({
+        model: faux.getModel(),
+        streamFn: (model, context, options) => {
+          void options?.onPayload?.({ model: model.id, messages: context.messages }, model);
+          return faux.streamSimple(model, context, options);
+        },
+        records: protectedRecords(),
+        memories: new DemoMemorySession(),
+        getApiKey: () => "ORIGINAL_SECRET_SENTINEL",
+        recorder: createFileAgentRunRecorder({ directory, now: () => new Date("2026-08-24T08:00:00.000Z") })
+      });
+      const draft = runtime.prepare({
+        message: "Find protected Figma records [SOURCE:SOURCE_QUERY]",
+        conversationSourceId: "SOURCE_QUERY",
+        writePolicy: "require_approval"
+      });
+      const handle = runtime.start(draft.draftId, () => undefined);
+
+      await expect(handle.done).resolves.toMatchObject({ status: "completed" });
+
+      const path = join(directory, `${handle.runId}.jsonl`);
+      const text = readFileSync(path, "utf8");
+      const entries = text.trim().split("\n").map((line) => JSON.parse(line) as { type: string; event?: { type: string } });
+      expect(entries[0]?.type).toBe("run_snapshot");
+      expect(entries.some(({ event }) => event?.type === "provider_payload")).toBe(true);
+      expect(entries.some(({ event }) => event?.type === "agent_completed")).toBe(true);
+      expect(text).toContain("Find protected Figma records");
+      expect(text).not.toContain("ORIGINAL_SECRET_SENTINEL");
+      expect(statSync(path).mode & 0o777).toBe(0o600);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("completes the Run when debug recording is unavailable", async () => {
+    const faux = createFauxCore({ tokensPerSecond: 0 });
+    faux.setResponses([fauxAssistantMessage(fauxToolCall("brainbuddy_finish", {
+      message: "Completed without audit storage.", references: [{ kind: "source", id: "SOURCE_QUERY" }]
+    }, { id: "recorder-failure-finish" }), { stopReason: "toolUse" })]);
+    const runtime = createAgentRuntime({
+      model: faux.getModel(),
+      streamFn: faux.streamSimple,
+      records: protectedRecords(),
+      memories: new DemoMemorySession(),
+      recorder: {
+        start() { throw new Error("disk is read-only"); },
+        record() { throw new Error("disk is read-only"); }
+      }
+    });
+    const draft = runtime.prepare({ message: "Finish safely", conversationSourceId: "SOURCE_QUERY", writePolicy: "require_approval" });
+
+    await expect(runtime.start(draft.draftId, () => undefined).done).resolves.toMatchObject({
+      status: "completed",
+      message: "Completed without audit storage."
+    });
+  });
+
   it("searches protected local records and finishes with references seen in this Run", async () => {
     const faux = createFauxCore({ tokensPerSecond: 0 });
     faux.setResponses([
