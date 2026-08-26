@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { configureDatabasePassword, configureModelConnection, getModelConnectionStatus } from "./App";
+import { configureDatabasePassword, configureModelConnection, getModelConnectionStatus, prepareAgentRun } from "./App";
 
 describe("browser database access", () => {
   afterEach(() => vi.unstubAllGlobals());
@@ -38,5 +38,36 @@ describe("browser database access", () => {
 
     await expect(getModelConnectionStatus()).resolves.toEqual(status);
     expect(fetchMock).toHaveBeenLastCalledWith("/api/model/connection-status", expect.any(Object));
+  });
+
+  it("submits the reviewed privacy decisions when preparing an Agent Run", async () => {
+    vi.stubGlobal("window", { brainBuddy: undefined });
+    const draft = {
+      draftId: "7885efba-fdd8-47f4-8607-f75018fdaf92",
+      createdAt: "2026-08-27T00:00:00.000Z",
+      message: "记录一下 agentflow 的密码是 [CREDENTIAL:test]",
+      conversationSourceId: "SOURCE_DEMO_004",
+      writePolicy: "require_approval"
+    };
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(draft), {
+      status: 200,
+      headers: { "content-type": "application/json" }
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    const decisions = [{
+      start: 20,
+      end: 28,
+      policy: "move_to_vault" as const,
+      credentialId: "00e5dcad-aad5-4fe2-a520-3ca35e0d03a8"
+    }];
+
+    await expect(prepareAgentRun("记录一下 agentflow 的密码是 77778888", "require_approval", decisions)).resolves.toEqual(draft);
+    expect(fetchMock).toHaveBeenCalledWith("/api/agent/prepare", expect.objectContaining({
+      body: JSON.stringify({
+        text: "记录一下 agentflow 的密码是 77778888",
+        writePolicy: "require_approval",
+        decisions
+      })
+    }));
   });
 });

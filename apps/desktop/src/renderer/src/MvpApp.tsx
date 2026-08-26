@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowClockwise,
   Brain,
@@ -24,6 +24,7 @@ import {
   X
 } from "@phosphor-icons/react";
 import type {
+  DetectedEntity,
   DemoCredentialSummary,
   DatabaseAccessStatus,
   DemoSaveReceipt,
@@ -31,10 +32,15 @@ import type {
   DemoSourceSummary,
   MemoryFile,
   ModelConnectionStatus,
-  PreparedMemoryWrite
+  PreparedMemoryWrite,
+  PrivacyAnalysis,
+  ProtectionPolicy,
+  ProtectionPreview
 } from "@brainbuddy/domain";
 import type { AgentReference, AgentRuntimeEvent } from "@brainbuddy/agent-runtime";
+import type { ProtectionRequest } from "@brainbuddy/shared-contracts";
 import {
+  analyzeInput,
   cancelAgentRun,
   configureModelConnection,
   configureDatabasePassword,
@@ -43,6 +49,7 @@ import {
   listMemoryFiles,
   lockDatabase,
   prepareAgentRun,
+  previewProtection,
   resolveAgentApproval,
   revealDemoSource,
   resetDatabase,
@@ -100,6 +107,12 @@ function PageHeader({ title, copy }: { readonly title: string; readonly copy: st
 
 function HomePage({ onSaved }: { readonly onSaved: () => void }): JSX.Element {
   const [question, setQuestion] = useState("");
+  const [questionAnalysis, setQuestionAnalysis] = useState<PrivacyAnalysis>();
+  const [questionPreview, setQuestionPreview] = useState<ProtectionPreview>();
+  const [questionDecisions, setQuestionDecisions] = useState<Record<string, ProtectionPolicy>>({});
+  const [questionCredentialIds, setQuestionCredentialIds] = useState<Record<string, string>>({});
+  const [isCheckingQuestion, setIsCheckingQuestion] = useState(false);
+  const [questionProtectionError, setQuestionProtectionError] = useState<string>();
   const [runId, setRunId] = useState<string>();
   const [isRunning, setIsRunning] = useState(false);
   const [answer, setAnswer] = useState<string>();
@@ -109,16 +122,96 @@ function HomePage({ onSaved }: { readonly onSaved: () => void }): JSX.Element {
   const [saveForm, setSaveForm] = useState({ keyword: "Figma", account: "lu@example.com", secret: "", note: "UI 原型设计主账号" });
   const [isSaving, setIsSaving] = useState(false);
   const [receipt, setReceipt] = useState<DemoSaveReceipt>();
+  const questionSequence = useRef(0);
+
+  useEffect(() => {
+    const sequence = ++questionSequence.current;
+    if (!question.trim()) {
+      setQuestionAnalysis(undefined);
+      setQuestionPreview(undefined);
+      setQuestionDecisions({});
+      setQuestionCredentialIds({});
+      setQuestionProtectionError(undefined);
+      setIsCheckingQuestion(false);
+      return;
+    }
+    setIsCheckingQuestion(true);
+    setQuestionProtectionError(undefined);
+    const timeout = window.setTimeout(() => void analyzeQuestion(question, sequence), 240);
+    return () => window.clearTimeout(timeout);
+  }, [question]);
+
+  async function analyzeQuestion(text: string, sequence: number): Promise<void> {
+    try {
+      const analysis = await analyzeInput(text);
+      const decisions = Object.fromEntries(analysis.entities.map((entity) => [questionEntityKey(entity), entity.suggestedPolicy]));
+      const preview = await previewProtection({
+        text,
+        decisions: buildQuestionProtectionDecisions(analysis, decisions, {})
+      });
+      if (questionSequence.current !== sequence) return;
+      setQuestionAnalysis(analysis);
+      setQuestionDecisions(decisions);
+      setQuestionCredentialIds(questionCredentialIdsFrom(preview));
+      setQuestionPreview(preview);
+    } catch {
+      if (questionSequence.current === sequence) {
+        setQuestionAnalysis(undefined);
+        setQuestionPreview(undefined);
+        setQuestionProtectionError("本地保护检查失败，请修改输入后重试。");
+      }
+    } finally {
+      if (questionSequence.current === sequence) setIsCheckingQuestion(false);
+    }
+  }
+
+  function updateQuestion(text: string): void {
+    ++questionSequence.current;
+    setQuestion(text);
+    setQuestionAnalysis(undefined);
+    setQuestionPreview(undefined);
+    setQuestionDecisions({});
+    setQuestionCredentialIds({});
+    setQuestionProtectionError(undefined);
+    setIsCheckingQuestion(Boolean(text.trim()));
+  }
+
+  async function changeQuestionPolicy(entity: DetectedEntity, policy: ProtectionPolicy): Promise<void> {
+    if (!questionAnalysis) return;
+    const sequence = ++questionSequence.current;
+    const text = question;
+    const decisions = { ...questionDecisions, [questionEntityKey(entity)]: policy };
+    setQuestionDecisions(decisions);
+    setIsCheckingQuestion(true);
+    setQuestionProtectionError(undefined);
+    try {
+      const preview = await previewProtection({
+        text,
+        decisions: buildQuestionProtectionDecisions(questionAnalysis, decisions, questionCredentialIds)
+      });
+      if (questionSequence.current !== sequence) return;
+      setQuestionCredentialIds((current) => ({ ...current, ...questionCredentialIdsFrom(preview) }));
+      setQuestionPreview(preview);
+    } catch {
+      if (questionSequence.current === sequence) setQuestionProtectionError("无法应用这项保护策略，请重新选择。");
+    } finally {
+      if (questionSequence.current === sequence) setIsCheckingQuestion(false);
+    }
+  }
 
   async function runAgent(): Promise<void> {
-    if (!question.trim()) return;
+    if (!question.trim() || !questionAnalysis || !questionPreview?.readyToSave || isCheckingQuestion) return;
     setIsRunning(true);
     setAnswer(undefined);
     setReferences([]);
     setApproval(undefined);
     setError(undefined);
     try {
-      const draft = await prepareAgentRun(question, "require_approval");
+      const draft = await prepareAgentRun(
+        question,
+        "require_approval",
+        buildQuestionProtectionDecisions(questionAnalysis, questionDecisions, questionCredentialIds)
+      );
       await streamAgentRun(draft.draftId, (event: AgentRuntimeEvent) => {
         setRunId(event.runId);
         if (event.type === "approval_required") setApproval(event.prepared);
@@ -173,14 +266,15 @@ function HomePage({ onSaved }: { readonly onSaved: () => void }): JSX.Element {
         <SectionTitle icon={<ChatCircleDots size={21} weight="duotone" />} title="和你的记忆对话" copy="查询、整理或更新本地 Memory，任何写入都会先征求你的同意。" />
         <div className="mvp-chat-box">
           <label htmlFor="mvp-question">给 BrainBuddy 的任务</label>
-          <textarea id="mvp-question" value={question} disabled={isRunning} onChange={(event) => setQuestion(event.target.value)} placeholder="例如：帮我找到 Figma 账号，或记住我正在使用 AgentFlow。" />
+          <textarea id="mvp-question" value={question} disabled={isRunning} onChange={(event) => updateQuestion(event.target.value)} placeholder="例如：帮我找到 Figma 账号，或记住我正在使用 AgentFlow。" />
+          <QuestionProtectionNotice analysis={questionAnalysis} preview={questionPreview} decisions={questionDecisions} isChecking={isCheckingQuestion} error={questionProtectionError} onPolicyChange={changeQuestionPolicy} />
           <div className="mvp-chat-actions">
             {isRunning && runId && <button className="mvp-secondary" type="button" onClick={() => void cancelAgentRun(runId)}>取消</button>}
-            <button className="mvp-primary" type="button" disabled={!question.trim() || isRunning} onClick={() => void runAgent()}>{isRunning ? "处理中" : <><PaperPlaneRight size={17} weight="bold" />发送</>}</button>
+            <button className="mvp-primary" type="button" disabled={!question.trim() || !questionPreview?.readyToSave || isCheckingQuestion || Boolean(questionProtectionError) || isRunning} onClick={() => void runAgent()}>{isRunning ? "处理中" : isCheckingQuestion ? "检查中" : <><PaperPlaneRight size={17} weight="bold" />发送</>}</button>
           </div>
         </div>
         <div className="mvp-suggestions">
-          <div className="mvp-mini-panel"><h3>试着问这些</h3><div className="mvp-chips">{querySuggestions.map((item) => <button key={item} type="button" onClick={() => setQuestion(item)}>{item}</button>)}</div></div>
+          <div className="mvp-mini-panel"><h3>试着问这些</h3><div className="mvp-chips">{querySuggestions.map((item) => <button key={item} type="button" onClick={() => updateQuestion(item)}>{item}</button>)}</div></div>
           <div className="mvp-mini-panel mvp-answer" aria-live="polite"><h3>{answer ? "本轮结果" : "回答会显示在这里"}</h3><p>{answer || "BrainBuddy 会先检索本地 Memory 与受保护记录，只向模型发送必要的安全视图。"}</p>{references.length > 0 && <div className="mvp-reference-list">{references.map((reference) => <code key={`${reference.kind}:${reference.id}`}>{reference.kind}: {reference.id}</code>)}</div>}</div>
         </div>
         {approval && <div className="mvp-approval"><div><strong>允许写入 {approval.path}？</strong><span>{approval.reason}</span></div><pre>{approval.diff}</pre><div><button className="mvp-secondary" type="button" onClick={() => void decide("deny")}>拒绝</button><button className="mvp-primary" type="button" onClick={() => void decide("approve")}>批准写入</button></div></div>}
@@ -199,6 +293,31 @@ function HomePage({ onSaved }: { readonly onSaved: () => void }): JSX.Element {
       </section>
     </div>
   </div>;
+}
+
+function QuestionProtectionNotice({ analysis, preview, decisions, isChecking, error, onPolicyChange }: {
+  readonly analysis: PrivacyAnalysis | undefined;
+  readonly preview: ProtectionPreview | undefined;
+  readonly decisions: Readonly<Record<string, ProtectionPolicy>>;
+  readonly isChecking: boolean;
+  readonly error: string | undefined;
+  readonly onPolicyChange: (entity: DetectedEntity, policy: ProtectionPolicy) => Promise<void>;
+}): JSX.Element | null {
+  if (isChecking) return <div className="mvp-protection-state checking" role="status"><ShieldCheck size={17} weight="duotone" /><span>正在本地检查敏感信息</span></div>;
+  if (error) return <div className="mvp-protection-state error" role="alert"><Warning size={17} weight="duotone" /><span>{error}</span></div>;
+  if (!analysis || !preview) return null;
+  if (!analysis.entities.length) return <div className="mvp-protection-state safe" role="status"><ShieldCheck size={17} weight="fill" /><span>本地检查完成，未发现需要保护的字段</span></div>;
+
+  const keptCount = analysis.entities.filter((entity) => decisions[questionEntityKey(entity)] === "keep_original").length;
+  return <section className="mvp-protection-notice" aria-label="本地保护提示">
+    <header><Warning size={19} weight="duotone" /><div><strong>检测到 {analysis.entities.length} 个敏感字段</strong><span>{keptCount ? `${keptCount} 个字段会保留原文并发送给 AI。` : "默认抽离为凭据，原文不会发送给 AI。"}</span></div></header>
+    <div className="mvp-protection-entities">{analysis.entities.map((entity) => {
+      const key = questionEntityKey(entity);
+      const selected = decisions[key] ?? entity.suggestedPolicy;
+      return <div className="mvp-protection-entity" key={key}><div><span>{questionEntityTypeLabel(entity.type)} · {questionRiskLabel(entity.risk)}风险</span><code>{maskQuestionEntity(entity.text)}</code></div><div className="mvp-protection-policy" role="group" aria-label={`${questionEntityTypeLabel(entity.type)}保护策略`}><button type="button" aria-pressed={selected === "keep_original"} onClick={() => void onPolicyChange(entity, "keep_original")}>保留原文</button><button type="button" aria-pressed={selected === "move_to_vault"} onClick={() => void onPolicyChange(entity, "move_to_vault")}>抽离为凭据</button></div></div>;
+    })}</div>
+    <div className="mvp-protection-preview"><span>AI 可见版本</span><code>{preview.protectedContent}</code></div>
+  </section>;
 }
 
 function SectionTitle({ icon, title, copy }: { readonly icon: JSX.Element; readonly title: string; readonly copy: string }): JSX.Element {
@@ -440,6 +559,57 @@ function sourceKind(kind: DemoSourceSummary["kind"]): string {
 
 export function databaseRecordTab(kind: DemoSourceSummary["kind"]): DatabaseRecordTab {
   return kind === "capture" ? "saved" : "conversation";
+}
+
+export function buildQuestionProtectionDecisions(
+  analysis: PrivacyAnalysis,
+  decisions: Readonly<Record<string, ProtectionPolicy>>,
+  credentialIds: Readonly<Record<string, string>>
+): ProtectionRequest["decisions"] {
+  return analysis.entities.map((entity) => {
+    const credentialId = credentialIds[questionEntityKey(entity)];
+    return {
+      start: entity.start,
+      end: entity.end,
+      policy: decisions[questionEntityKey(entity)] ?? entity.suggestedPolicy,
+      ...(credentialId ? { credentialId } : {})
+    };
+  });
+}
+
+function questionEntityKey(entity: DetectedEntity): string {
+  return `${entity.start}:${entity.end}`;
+}
+
+function questionCredentialIdsFrom(preview: ProtectionPreview): Record<string, string> {
+  return Object.fromEntries(preview.credentials.map((credential) => [
+    `${credential.start}:${credential.end}`,
+    credential.credentialId
+  ]));
+}
+
+function questionEntityTypeLabel(type: DetectedEntity["type"]): string {
+  return ({
+    password: "密码",
+    api_key: "API Key",
+    email: "邮箱或账号",
+    private_key: "私钥",
+    github_token: "GitHub Token",
+    jwt: "JWT",
+    high_entropy_secret: "疑似密钥",
+    person: "人物",
+    company: "公司",
+    project: "项目"
+  } as const)[type];
+}
+
+function questionRiskLabel(risk: DetectedEntity["risk"]): string {
+  return ({ low: "低", medium: "中", high: "高", critical: "严重" } as const)[risk];
+}
+
+function maskQuestionEntity(value: string): string {
+  if (value.length <= 4) return "•".repeat(value.length);
+  return `${value.slice(0, 2)}${"•".repeat(Math.min(8, value.length - 4))}${value.slice(-2)}`;
 }
 
 function formatTime(value: string): string {

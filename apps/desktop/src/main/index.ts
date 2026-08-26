@@ -209,8 +209,10 @@ app.whenReady().then(() => {
     return localBackend!.memories.apply(operation);
   });
   ipcMain.handle(PREPARE_AGENT_RUN_CHANNEL, (_event, request: unknown) => {
-    const { text, writePolicy } = PrepareAgentRunRequestSchema.parse(request);
-    const receipt = localBackend!.saveSuggested(text, "conversation");
+    const { text, writePolicy, decisions } = PrepareAgentRunRequestSchema.parse(request);
+    const receipt = decisions
+      ? localBackend!.save(text, decisions, "conversation")
+      : localBackend!.saveSuggested(text, "conversation");
     return getAgentRuntime().prepare({
       message: receipt.preview.protectedContent,
       conversationSourceId: receipt.sourceId,

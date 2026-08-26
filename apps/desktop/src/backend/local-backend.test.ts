@@ -68,4 +68,30 @@ describe("LocalBackend", () => {
     expect(reopened.requireModelConnection()).toEqual({ apiKey: replacementKey, modelId: "deepseek-reasoner" });
     reopened.close();
   });
+
+  it("uses the reviewed Credential ID when saving a protected conversation", () => {
+    const dataDirectory = mkdtempSync(join(tmpdir(), "brainbuddy-local-backend-"));
+    directories.push(dataDirectory);
+    const backend = new LocalBackend({ dataDirectory });
+    const original = "记录一下 agentflow 的密码是 77778888";
+    const secret = "77778888";
+    const start = original.indexOf(secret);
+    const credentialId = "00e5dcad-aad5-4fe2-a520-3ca35e0d03a8";
+
+    const receipt = backend.save(original, [{
+      start,
+      end: start + secret.length,
+      policy: "move_to_vault",
+      credentialId
+    }], "conversation");
+
+    expect(receipt.preview.protectedContent).toContain(
+      `记录一下 agentflow 的密码是 [CREDENTIAL:${credentialId}]`
+    );
+    expect(receipt.preview.protectedContent).toContain(`来源：[SOURCE:${receipt.sourceId}]`);
+    expect(receipt.preview.credentials).toEqual([
+      expect.objectContaining({ credentialId, maskedValue: "777•••88" })
+    ]);
+    backend.close();
+  });
 });

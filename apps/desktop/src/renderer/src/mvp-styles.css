@@ -54,6 +54,30 @@ body.mvp-route { min-width: 0; background: #f6f7fb; }
 .mvp-chat-box > label { display: block; margin-bottom: 8px; color: #586176; font-size: 11px; font-weight: 700; }
 .mvp-chat-box textarea { display: block; width: 100%; min-height: 88px; resize: vertical; border: 0; outline: 0; background: transparent; color: var(--mvp-text); font-size: 15px; line-height: 1.65; }
 .mvp-chat-box textarea::placeholder, .mvp-form-grid input::placeholder, .mvp-search input::placeholder { color: var(--mvp-muted); }
+.mvp-protection-state { display: flex; align-items: center; gap: 8px; min-height: 38px; margin-top: 10px; border-radius: 10px; padding: 8px 10px; font-size: 10px; font-weight: 700; }
+.mvp-protection-state.checking { background: #f4f2ff; color: #6257ad; }
+.mvp-protection-state.safe { background: var(--mvp-success-soft); color: var(--mvp-success); }
+.mvp-protection-state.error { background: var(--mvp-danger-soft); color: var(--mvp-danger); }
+.mvp-protection-notice { margin-top: 11px; overflow: hidden; border: 1px solid #c9c4f0; border-radius: 12px; background: #faf9ff; }
+.mvp-protection-notice > header { display: flex; align-items: flex-start; gap: 9px; padding: 11px 12px; color: var(--mvp-accent); }
+.mvp-protection-notice > header strong, .mvp-protection-notice > header span { display: block; }
+.mvp-protection-notice > header strong { color: #413b70; font-size: 11px; }
+.mvp-protection-notice > header span { margin-top: 3px; color: #666078; font-size: 9px; line-height: 1.5; }
+.mvp-protection-entities { border-top: 1px solid #e2dff5; background: var(--mvp-panel); }
+.mvp-protection-entity { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 10px 12px; }
+.mvp-protection-entity + .mvp-protection-entity { border-top: 1px solid #eceaf5; }
+.mvp-protection-entity > div:first-child { min-width: 0; }
+.mvp-protection-entity > div:first-child span, .mvp-protection-entity > div:first-child code { display: block; }
+.mvp-protection-entity > div:first-child span { color: var(--mvp-muted); font-size: 9px; }
+.mvp-protection-entity > div:first-child code { margin-top: 4px; overflow: hidden; color: #413b70; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.mvp-protection-policy { display: flex; flex: 0 0 auto; gap: 5px; }
+.mvp-protection-policy button { min-height: 30px; border: 1px solid #d8d5e7; border-radius: 8px; background: var(--mvp-panel); padding: 0 9px; color: #5b6477; cursor: pointer; font-size: 9px; font-weight: 700; white-space: nowrap; }
+.mvp-protection-policy button:hover { border-color: #b8b1e8; color: var(--mvp-accent-strong); }
+.mvp-protection-policy button[aria-pressed="true"] { border-color: #ada5e8; background: var(--mvp-accent-soft); color: var(--mvp-accent-strong); }
+.mvp-protection-policy button:active { transform: scale(.98); }
+.mvp-protection-preview { display: grid; grid-template-columns: 90px minmax(0, 1fr); gap: 10px; border-top: 1px solid #e2dff5; padding: 10px 12px; background: #f5f3ff; }
+.mvp-protection-preview span { color: #625b78; font-size: 9px; font-weight: 800; }
+.mvp-protection-preview code { color: #48405f; font-size: 10px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
 .mvp-chat-actions, .mvp-save-row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 11px; }
 .mvp-primary, .mvp-secondary { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 40px; border-radius: 10px; padding: 0 15px; cursor: pointer; font-size: 12px; font-weight: 700; white-space: nowrap; transition-property: background-color, border-color, color, transform, opacity; transition-duration: 140ms; }
 .mvp-primary { border: 1px solid var(--mvp-accent); background: var(--mvp-accent); color: #faf9ff; }
@@ -208,6 +232,9 @@ body.mvp-route { min-width: 0; background: #f6f7fb; }
   .mvp-main { padding: 24px 16px 40px; }
   .mvp-page-head h1 { font-size: 29px; }
   .mvp-section { padding: 18px; }
+  .mvp-protection-entity { align-items: stretch; flex-direction: column; }
+  .mvp-protection-policy { display: grid; grid-template-columns: 1fr 1fr; }
+  .mvp-protection-preview { grid-template-columns: 1fr; }
   .mvp-form-grid { grid-template-columns: 1fr; gap: 7px; }.mvp-form-grid input { margin-bottom: 8px; }
   .mvp-toolbar { align-items: stretch; flex-wrap: wrap; }.mvp-toolbar .mvp-search { flex-basis: 100%; }.mvp-security-state { flex: 1; justify-content: center; }
   .mvp-database-tabs { grid-template-columns: 1fr; }

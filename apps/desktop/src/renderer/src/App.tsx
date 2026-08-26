@@ -805,12 +805,12 @@ function credentialIdsFrom(preview: ProtectionPreview): Record<string, string> {
   ]));
 }
 
-async function analyzeInput(text: string): Promise<PrivacyAnalysis> {
+export async function analyzeInput(text: string): Promise<PrivacyAnalysis> {
   if (window.brainBuddy) return window.brainBuddy.analyzeInput({ text });
   return postJson<PrivacyAnalysis>("/api/privacy/analyze", { text });
 }
 
-async function previewProtection(request: ProtectionRequest): Promise<ProtectionPreview> {
+export async function previewProtection(request: ProtectionRequest): Promise<ProtectionPreview> {
   if (window.brainBuddy) return window.brainBuddy.previewProtection(request);
   return postJson<ProtectionPreview>("/api/privacy/preview", request);
 }
@@ -903,9 +903,10 @@ async function streamAiConversation(
   if (pending.trim()) onEvent((JSON.parse(pending) as { readonly event: AiConversationEvent }).event);
 }
 
-async function prepareAgentRun(text: string, writePolicy: MemoryWritePolicy): Promise<AgentRunDraft> {
-  if (window.brainBuddy) return window.brainBuddy.prepareAgentRun({ text, writePolicy });
-  return postJson<AgentRunDraft>("/api/agent/prepare", { text, writePolicy });
+async function prepareAgentRun(text: string, writePolicy: MemoryWritePolicy, decisions?: ProtectionRequest["decisions"]): Promise<AgentRunDraft> {
+  const request = { text, writePolicy, ...(decisions ? { decisions } : {}) };
+  if (window.brainBuddy) return window.brainBuddy.prepareAgentRun(request);
+  return postJson<AgentRunDraft>("/api/agent/prepare", request);
 }
 
 async function streamAgentRun(

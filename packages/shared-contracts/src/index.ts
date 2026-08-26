@@ -52,14 +52,16 @@ export const AnalyzeInputRequestSchema = z.object({
 
 export type AnalyzeInputRequest = z.infer<typeof AnalyzeInputRequestSchema>;
 
+const ProtectionDecisionSchema = z.object({
+  start: z.number().int().nonnegative(),
+  end: z.number().int().nonnegative(),
+  policy: z.enum(["keep_original", "move_to_vault"]),
+  credentialId: z.string().uuid().optional()
+});
+
 export const ProtectionRequestSchema = z.object({
   text: z.string().max(20_000),
-  decisions: z.array(z.object({
-    start: z.number().int().nonnegative(),
-    end: z.number().int().nonnegative(),
-    policy: z.enum(["keep_original", "move_to_vault"]),
-    credentialId: z.string().uuid().optional()
-  })).max(500)
+  decisions: z.array(ProtectionDecisionSchema).max(500)
 });
 
 export type ProtectionRequest = z.infer<typeof ProtectionRequestSchema>;
@@ -86,7 +88,8 @@ export const CancelAiConversationRequestSchema = z.object({
 
 export const PrepareAgentRunRequestSchema = z.object({
   text: z.string().trim().min(1).max(2_000),
-  writePolicy: z.enum(["require_approval", "auto_apply"])
+  writePolicy: z.enum(["require_approval", "auto_apply"]),
+  decisions: z.array(ProtectionDecisionSchema).max(500).optional()
 });
 
 export const StartAgentRunRequestSchema = z.object({ draftId: z.string().uuid() });

@@ -135,7 +135,9 @@ export function aiConversationMiddleware(options: {
           }
           if (request.url === "/api/agent/prepare") {
             const input = PrepareAgentRunRequestSchema.parse(await readJson(request));
-            const receipt = backend.saveSuggested(input.text, "conversation");
+            const receipt = input.decisions
+              ? backend.save(input.text, input.decisions, "conversation")
+              : backend.saveSuggested(input.text, "conversation");
             return sendJson(response, 200, getAgentRuntime().prepare({
               message: receipt.preview.protectedContent,
               conversationSourceId: receipt.sourceId,
