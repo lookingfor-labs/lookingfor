@@ -24,6 +24,7 @@ import {
   CANCEL_AGENT_RUN_CHANNEL,
   CancelAgentRunRequestSchema,
   CancelAiConversationRequestSchema,
+  LIST_MEMORY_FILES_CHANNEL,
   PREPARE_AI_CONVERSATION_CHANNEL,
   PREPARE_AGENT_RUN_CHANNEL,
   PrepareAgentRunRequestSchema,
@@ -294,6 +295,7 @@ app.whenReady().then(() => {
     aiDrafts.clear();
     return memoryStore!.reset();
   });
+  ipcMain.handle(LIST_MEMORY_FILES_CHANNEL, () => memoryStore!.list());
   createWindow();
 
   app.on("activate", () => {

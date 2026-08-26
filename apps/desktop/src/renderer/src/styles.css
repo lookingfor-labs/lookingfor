@@ -25,6 +25,7 @@ button { color: inherit; }
 .demo-state { width: 7px; height: 7px; border-radius: 50%; }.demo-state.ready { background: #68a17e; }.demo-state.next { background: #c39b4b; }.demo-state.planned { background: #68665f; }
 .sidebar-foot { display: grid; gap: 7px; margin-top: auto; padding: 16px 10px 0; border-top: 1px solid #44423b; color: #aaa69c; font-size: 10px; }
 .sidebar-foot span { display: flex; align-items: center; gap: 7px; }.sidebar-foot i { width: 6px; height: 6px; border-radius: 50%; background: #68a17e; }.sidebar-foot small { color: #77736a; line-height: 1.5; text-transform: none; }
+.sidebar-foot button { width: 100%; margin-top: 5px; border: 1px solid #514f49; background: transparent; padding: 8px 10px; color: #d8d4ca; cursor: pointer; font-size: 9px; }
 .masthead { display: flex; align-items: center; gap: 14px; border-bottom: 1px solid #c9c6bb; padding-bottom: 22px; }
 .brand-mark { display: grid; place-items: center; width: 42px; height: 42px; background: #20201d; color: #f3f0e8; font-family: Georgia, serif; font-size: 25px; }
 .eyebrow, .section-number { margin: 0 0 4px; color: #757269; font-size: 11px; letter-spacing: .14em; text-transform: uppercase; }

@@ -7,6 +7,7 @@ import {
   APPLY_MEMORY_OPERATION_CHANNEL,
   CANCEL_AI_CONVERSATION_CHANNEL,
   CANCEL_AGENT_RUN_CHANNEL,
+  LIST_MEMORY_FILES_CHANNEL,
   PREPARE_AI_CONVERSATION_CHANNEL,
   PREPARE_AGENT_RUN_CHANNEL,
   PREVIEW_PROTECTION_CHANNEL,
@@ -45,7 +46,8 @@ const api: BrainBuddyApi = {
     return () => ipcRenderer.removeListener(AGENT_RUN_EVENT_CHANNEL, wrapped);
   },
   revertMemoryRevision: (request) => ipcRenderer.invoke(REVERT_MEMORY_REVISION_CHANNEL, request),
-  resetMemoryTestContext: () => ipcRenderer.invoke(RESET_MEMORY_CONTEXT_CHANNEL)
+  resetMemoryTestContext: () => ipcRenderer.invoke(RESET_MEMORY_CONTEXT_CHANNEL),
+  listMemoryFiles: () => ipcRenderer.invoke(LIST_MEMORY_FILES_CHANNEL)
 };
 
 contextBridge.exposeInMainWorld("brainBuddy", api);

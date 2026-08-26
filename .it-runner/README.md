@@ -5,6 +5,8 @@
 Starts the BrainBuddy development UI with renderer hot reload. On a host with
 an active graphical session it opens Electron. On a headless Agentflow host it
 starts a browser preview on the declared renderer port instead.
+The root URL serves the MVP product surface. The original staged acceptance UI
+is available at `/demo`.
 
 The task installs locked npm dependencies with `npm ci` only when
 `node_modules/.bin/electron-vite` is missing. It then runs `npm run dev` and

@@ -111,7 +111,7 @@ export function aiConversationMiddleware(options: {
     name: "brainbuddy-ai-conversation-dev-server",
     configureServer(server) {
       server.middlewares.use(async (request, response, next) => {
-        if (request.method !== "POST" || (!request.url?.startsWith("/api/ai-conversation/") && !request.url?.startsWith("/api/agent/"))) return next();
+        if (request.method !== "POST" || (!request.url?.startsWith("/api/ai-conversation/") && !request.url?.startsWith("/api/agent/") && !request.url?.startsWith("/api/memory/"))) return next();
         try {
           if (request.url === "/api/ai-conversation/prepare") {
             const input = prepareSchema.parse(await readJson(request)) as Omit<AiConversationInput, "memories">;
@@ -190,6 +190,7 @@ export function aiConversationMiddleware(options: {
             drafts.clear();
             return sendJson(response, 200, memories.reset());
           }
+          if (request.url === "/api/memory/list") return sendJson(response, 200, memories.list());
           return sendJson(response, 404, { error: "Not found" });
         } catch (error) {
           if (response.headersSent) {

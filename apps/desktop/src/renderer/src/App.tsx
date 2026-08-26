@@ -84,7 +84,7 @@ const secretTypes: ReadonlySet<EntityType> = new Set([
   "password", "api_key", "private_key", "github_token", "jwt", "high_entropy_secret"
 ]);
 
-export function App(): JSX.Element {
+export function App({ onOpenMvp }: { readonly onOpenMvp?: () => void } = {}): JSX.Element {
   const usesPersistentDatabase = Boolean(window.brainBuddy);
   const [activePage, setActivePage] = useState<DemoPage>("protect");
   const [text, setText] = useState<string>(scenarios[0].text);
@@ -216,7 +216,7 @@ export function App(): JSX.Element {
             <em>{item.status === "ready" ? "可验收" : item.status === "next" ? "本地数据库" : "界面预览"}</em>
           </button>)}
         </nav>
-        <div className="sidebar-foot"><span><i /> 本地运行</span><span>{activePage === "ai" || activePage === "agent" ? "DeepSeek 已接入" : "AI 请求仅在 04 / 05 发起"}</span><small>{usesPersistentDatabase ? "Source 与凭据已保存到本地 SQLite" : "浏览器验收模式使用会话内存"}</small></div>
+        <div className="sidebar-foot"><span><i /> 本地运行</span><span>{activePage === "ai" || activePage === "agent" ? "DeepSeek 已接入" : "AI 请求仅在 04 / 05 发起"}</span><small>{usesPersistentDatabase ? "Source 与凭据已保存到本地 SQLite" : "浏览器验收模式使用会话内存"}</small>{onOpenMvp && <button type="button" onClick={onOpenMvp}>返回 MVP</button>}</div>
       </aside>
 
       <main className="shell">
@@ -1029,6 +1029,28 @@ async function requestMemoryContextReset(): Promise<MemoryResetResult> {
   if (window.brainBuddy) return window.brainBuddy.resetMemoryTestContext();
   return postJson<MemoryResetResult>("/api/agent/reset-memory", {});
 }
+
+export async function listMemoryFiles(): Promise<readonly MemoryFile[]> {
+  if (window.brainBuddy) return window.brainBuddy.listMemoryFiles();
+  return postJson<readonly MemoryFile[]>("/api/memory/list", {});
+}
+
+export async function saveSuggestedProtectedText(text: string): Promise<DemoSaveReceipt> {
+  const analysis = await analyzeInput(text);
+  return saveDemoCandidate({
+    text,
+    decisions: analysis.entities.map(({ start, end, suggestedPolicy: policy }) => ({ start, end, policy }))
+  });
+}
+
+export {
+  cancelAgentRun,
+  prepareAgentRun,
+  resolveAgentApproval,
+  revealDemoSource,
+  searchDemoSources,
+  streamAgentRun
+};
 
 function isTerminalAgentEvent(event: AgentRuntimeEvent): boolean {
   return event.type === "agent_completed" || event.type === "agent_failed" || event.type === "agent_cancelled";
