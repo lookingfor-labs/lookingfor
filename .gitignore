@@ -5,8 +5,17 @@ apps/desktop/release/
 coverage/
 *.log
 .DS_Store
+Thumbs.db
+Desktop.ini
 .env
 .env.*
 !.env.example
+electron-builder.env
+*.p12
+*.pfx
+*.pem
+*.key
+*.cer
+*.crt
 .it-runner/logs/
 .it-runner/data/

@@ -27,11 +27,27 @@
       "out/**/*"
     ],
     "linux": {
+      "icon": "build/icon.png",
       "target": [
         "AppImage"
       ],
       "category": "Utility",
       "syncDesktopName": true
+    },
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "mac": {
+      "icon": "build/icon.icns",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.productivity"
     }
   },
   "dependencies": {

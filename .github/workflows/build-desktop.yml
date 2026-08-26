@@ -1,0 +1,95 @@
+name: Build desktop packages
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-packages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Verify source
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22.22.0
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Run type checks
+        run: npm run typecheck
+
+  package:
+    name: Package ${{ matrix.name }}
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x64
+            runner: ubuntu-24.04
+            command: npm run dist --workspace @brainbuddy/desktop -- --linux AppImage --x64
+            artifact: brainbuddy-linux-x64
+            files: apps/desktop/release/*.AppImage
+          - name: Windows x64
+            runner: windows-2025
+            command: npm run dist --workspace @brainbuddy/desktop -- --win nsis portable --x64
+            artifact: brainbuddy-windows-x64
+            files: apps/desktop/release/*.exe
+          - name: macOS Apple Silicon
+            runner: macos-15
+            command: npm run dist --workspace @brainbuddy/desktop -- --mac dmg zip --arm64
+            artifact: brainbuddy-macos-arm64
+            files: |-
+              apps/desktop/release/*.dmg
+              apps/desktop/release/*.zip
+          - name: macOS Intel
+            runner: macos-15-intel
+            command: npm run dist --workspace @brainbuddy/desktop -- --mac dmg zip --x64
+            artifact: brainbuddy-macos-x64
+            files: |-
+              apps/desktop/release/*.dmg
+              apps/desktop/release/*.zip
+    runs-on: ${{ matrix.runner }}
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22.22.0
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build unsigned package
+        run: ${{ matrix.command }}
+
+      - name: Upload package
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.files }}
+          if-no-files-found: error
+          retention-days: 14
