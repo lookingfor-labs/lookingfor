@@ -30,13 +30,16 @@ import type {
   DemoSourceReveal,
   DemoSourceSummary,
   MemoryFile,
+  ModelConnectionStatus,
   PreparedMemoryWrite
 } from "@brainbuddy/domain";
 import type { AgentReference, AgentRuntimeEvent } from "@brainbuddy/agent-runtime";
 import {
   cancelAgentRun,
+  configureModelConnection,
   configureDatabasePassword,
   getDatabaseAccessStatus,
+  getModelConnectionStatus,
   listMemoryFiles,
   lockDatabase,
   prepareAgentRun,
@@ -337,17 +340,37 @@ function MemoriesPage({ refreshToken, onRefresh }: { readonly refreshToken: numb
 function SettingsPage(): JSX.Element {
   const persistent = Boolean(window.brainBuddy);
   const [access, setAccess] = useState<DatabaseAccessStatus>();
+  const [modelConnection, setModelConnection] = useState<ModelConnectionStatus>();
+  const [modelForm, setModelForm] = useState({ apiKey: "", modelId: "deepseek-chat" });
   const [passwords, setPasswords] = useState({ current: "", next: "", confirm: "" });
   const [resetOpen, setResetOpen] = useState(false);
   const [resetPhrase, setResetPhrase] = useState("");
   const [resetPassword, setResetPassword] = useState("");
   const [isSavingPassword, setIsSavingPassword] = useState(false);
+  const [isSavingModel, setIsSavingModel] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
   const [message, setMessage] = useState<{ readonly tone: "success" | "error"; readonly text: string }>();
 
   useEffect(() => {
     void getDatabaseAccessStatus().then(setAccess).catch((cause) => setMessage({ tone: "error", text: messageFrom(cause) }));
+    void getModelConnectionStatus().then((status) => {
+      setModelConnection(status);
+      setModelForm((current) => ({ ...current, modelId: status.modelId }));
+    }).catch((cause) => setMessage({ tone: "error", text: messageFrom(cause) }));
   }, []);
+
+  async function saveModelConnection(event: React.FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    setIsSavingModel(true);
+    setMessage(undefined);
+    try {
+      const status = await configureModelConnection(modelForm.apiKey, modelForm.modelId);
+      setModelConnection(status);
+      setModelForm({ apiKey: "", modelId: status.modelId });
+      setMessage({ tone: "success", text: modelConnection?.configured ? "DeepSeek 连接配置已更新。" : "DeepSeek 连接配置已保存。" });
+    } catch (cause) { setMessage({ tone: "error", text: messageFrom(cause) }); }
+    finally { setIsSavingModel(false); }
+  }
 
   async function savePassword(event: React.FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
@@ -395,10 +418,10 @@ function SettingsPage(): JSX.Element {
     {message && <p className={`mvp-alert ${message.tone}`} role={message.tone === "error" ? "alert" : "status"}>{message.text}</p>}
     <div className="mvp-settings-grid">
       <section className="mvp-card mvp-setting-card"><div className="mvp-setting-icon"><Folder size={22} weight="duotone" /></div><div><h2>本地记忆目录</h2><p>受控 Markdown 根目录，Agent 不能访问此目录之外的文件。</p><dl><dt>运行模式</dt><dd>{persistent ? "Electron 持久化" : "desktop-dev 持久化"}</dd><dt>Memory Root</dt><dd><code>{persistent ? "userData/memories" : ".it-runner/data/desktop-dev/memories"}</code></dd></dl></div></section>
-      <section className="mvp-card mvp-setting-card"><div className="mvp-setting-icon"><Key size={22} weight="duotone" /></div><div><h2>AI 连接</h2><p>密钥由本地环境提供，界面和 Agent 工具都不能读取明文。</p><dl><dt>Provider</dt><dd>DeepSeek</dd><dt>API Key</dt><dd><code>由 SECRET_DEEPSEEK_API_KEY 提供</code></dd><dt>能力</dt><dd className="mvp-capabilities"><span><CheckCircle weight="fill" />流式对话</span><span><CheckCircle weight="fill" />Tool Calling</span></dd></dl></div></section>
+      <section className="mvp-card mvp-setting-card mvp-model-settings"><div className="mvp-setting-icon"><Key size={22} weight="duotone" /></div><div><div className="mvp-setting-heading"><div><h2>AI 连接</h2><p>配置由本地后端加密保存。保存后，界面和 Agent 工具都无法读回密钥明文。</p></div><span className={`mvp-status-pill ${modelConnection?.configured ? "unlocked" : "unset"}`}>{modelConnection?.configured ? "已配置" : "尚未配置"}</span></div><form className="mvp-model-form" onSubmit={(event) => void saveModelConnection(event)}><label>Provider<input value="DeepSeek" disabled /></label><label>模型<input value={modelForm.modelId} required maxLength={100} onChange={(event) => setModelForm({ ...modelForm, modelId: event.target.value })} /></label><label className="mvp-model-key">API Key<input type="password" autoComplete="new-password" minLength={8} maxLength={512} required value={modelForm.apiKey} onChange={(event) => setModelForm({ ...modelForm, apiKey: event.target.value })} placeholder={modelConnection?.maskedApiKey ? `当前 ${modelConnection.maskedApiKey}，输入新 Key 可替换` : "输入 DeepSeek API Key"} /></label><div className="mvp-form-actions"><button className="mvp-primary" type="submit" disabled={isSavingModel || modelForm.apiKey.trim().length < 8 || !modelForm.modelId.trim()}>{isSavingModel ? "保存中" : modelConnection?.configured ? "更新连接" : "保存连接"}</button></div></form><p className="mvp-field-note">Electron 与 desktop-dev 使用相同的本地配置模块；环境变量仅在首次没有配置时导入。</p></div></section>
       <section className="mvp-card mvp-setting-card mvp-password-settings"><div className="mvp-setting-icon"><LockKey size={22} weight="duotone" /></div><div><div className="mvp-setting-heading"><div><h2>数据库访问密码</h2><p>用于解锁原文查看和数据库重置；它不会替代独立的本机加密密钥。</p></div><span className={`mvp-status-pill ${access?.passwordConfigured ? (access.unlocked ? "unlocked" : "locked") : "unset"}`}>{access?.passwordConfigured ? (access.unlocked ? "已设置 · 已解锁" : "已设置 · 已锁定") : "尚未设置"}</span></div><form className="mvp-password-form" onSubmit={(event) => void savePassword(event)}>{access?.passwordConfigured && <label>当前密码<input type="password" autoComplete="current-password" required value={passwords.current} onChange={(event) => setPasswords({ ...passwords, current: event.target.value })} /></label>}<label>新密码<input type="password" autoComplete="new-password" minLength={8} maxLength={128} required value={passwords.next} onChange={(event) => setPasswords({ ...passwords, next: event.target.value })} placeholder="至少 8 个字符" /></label><label>确认新密码<input type="password" autoComplete="new-password" minLength={8} maxLength={128} required value={passwords.confirm} onChange={(event) => setPasswords({ ...passwords, confirm: event.target.value })} /></label><div className="mvp-form-actions">{access?.passwordConfigured && access.unlocked && <button className="mvp-secondary" type="button" onClick={() => void lockNow()}><LockKey size={16} />立即锁定</button>}<button className="mvp-primary" type="submit" disabled={isSavingPassword || passwords.next.length < 8 || passwords.confirm.length < 8}>{isSavingPassword ? "保存中" : access?.passwordConfigured ? "更新密码" : "设置密码"}</button></div></form><p className="mvp-field-note">忘记此密码后无法从界面查看原文或清库。密码校验信息会持久化在当前运行模式的本地数据目录。</p></div></section>
       <section className="mvp-card mvp-setting-card mvp-security-settings"><div className="mvp-setting-icon"><ShieldCheck size={22} weight="duotone" /></div><div><h2>隐私与安全</h2><p>这些规则由运行时强制执行，不依赖模型自行遵守。</p><div className="mvp-policy-row"><div><strong>Memory 写入需要批准</strong><span>主页对话默认使用 require_approval。</span></div><CheckCircle size={22} weight="fill" /></div><div className="mvp-policy-row"><div><strong>凭据明文不发送给 AI</strong><span>Agent 只接收 Credential ID 和掩码。</span></div><CheckCircle size={22} weight="fill" /></div><div className="mvp-policy-row"><div><strong>受控 Memory 根目录</strong><span>路径逃逸和符号链接会被拒绝。</span></div><CheckCircle size={22} weight="fill" /></div></div></section>
-      <section className="mvp-card mvp-setting-card mvp-danger-settings"><div className="mvp-setting-icon"><Warning size={22} weight="duotone" /></div><div><h2>危险操作</h2><p>重置只清除本地数据库中的 Source、Credential 及其关联；不会删除 Memory、Agent 调试记录、数据库访问密码或设备加密密钥。</p>{!resetOpen ? <div className="mvp-danger-row"><div><strong>重置数据库</strong><span>此操作不可撤销，执行前会要求再次确认。</span></div><button className="mvp-danger-button" type="button" onClick={() => { setResetOpen(true); setMessage(undefined); }}><Trash size={16} />重置数据库</button></div> : <div className="mvp-reset-confirm" role="group" aria-labelledby="reset-database-title"><div><strong id="reset-database-title">确认永久清除数据库？</strong><span>请输入“清除数据库”完成二次确认。</span></div><label>确认文本<input value={resetPhrase} autoFocus onChange={(event) => setResetPhrase(event.target.value)} placeholder="清除数据库" /></label>{access?.passwordConfigured && !access.unlocked && <label>数据库密码<input type="password" autoComplete="current-password" value={resetPassword} onChange={(event) => setResetPassword(event.target.value)} placeholder="先验证数据库密码" /></label>}<div className="mvp-form-actions"><button className="mvp-secondary" type="button" disabled={isResetting} onClick={() => { setResetOpen(false); setResetPhrase(""); setResetPassword(""); }}>取消</button><button className="mvp-danger-button" type="button" disabled={isResetting || resetPhrase !== "清除数据库" || Boolean(access?.passwordConfigured && !access.unlocked && !resetPassword)} onClick={() => void confirmReset()}>{isResetting ? "正在清除" : "确认清除数据库"}</button></div></div>}</div></section>
+      <section className="mvp-card mvp-setting-card mvp-danger-settings"><div className="mvp-setting-icon"><Warning size={22} weight="duotone" /></div><div><h2>危险操作</h2><p>重置只清除本地数据库中的 Source、Credential 及其关联；不会删除 Memory、Agent 调试记录、模型连接配置、数据库访问密码或设备加密密钥。</p>{!resetOpen ? <div className="mvp-danger-row"><div><strong>重置数据库</strong><span>此操作不可撤销，执行前会要求再次确认。</span></div><button className="mvp-danger-button" type="button" onClick={() => { setResetOpen(true); setMessage(undefined); }}><Trash size={16} />重置数据库</button></div> : <div className="mvp-reset-confirm" role="group" aria-labelledby="reset-database-title"><div><strong id="reset-database-title">确认永久清除数据库？</strong><span>请输入“清除数据库”完成二次确认。</span></div><label>确认文本<input value={resetPhrase} autoFocus onChange={(event) => setResetPhrase(event.target.value)} placeholder="清除数据库" /></label>{access?.passwordConfigured && !access.unlocked && <label>数据库密码<input type="password" autoComplete="current-password" value={resetPassword} onChange={(event) => setResetPassword(event.target.value)} placeholder="先验证数据库密码" /></label>}<div className="mvp-form-actions"><button className="mvp-secondary" type="button" disabled={isResetting} onClick={() => { setResetOpen(false); setResetPhrase(""); setResetPassword(""); }}>取消</button><button className="mvp-danger-button" type="button" disabled={isResetting || resetPhrase !== "清除数据库" || Boolean(access?.passwordConfigured && !access.unlocked && !resetPassword)} onClick={() => void confirmReset()}>{isResetting ? "正在清除" : "确认清除数据库"}</button></div></div>}</div></section>
     </div>
   </div>;
 }
@@ -429,5 +452,10 @@ function messageFrom(cause: unknown): string {
   if (message.includes("DATABASE_PASSWORD_WEAK")) return "数据库密码需要 8-128 个字符。";
   if (message.includes("DATABASE_LOCKED")) return "请先解锁本地数据库。";
   if (message.includes("DATABASE_RESET_BLOCKED")) return "数据库正在被 AI Run 使用，请先等待完成或取消 Run。";
+  if (message.includes("MODEL_NOT_CONFIGURED")) return "请先在设置页配置 DeepSeek API Key。";
+  if (message.includes("MODEL_API_KEY_INVALID")) return "DeepSeek API Key 需要 8-512 个字符。";
+  if (message.includes("MODEL_ID_INVALID")) return "模型名称不能为空，且不能超过 100 个字符。";
+  if (message.includes("MODEL_CONFIG_INVALID")) return "本地模型连接配置无法解密，请重新配置。";
+  if (message.includes("MODEL_CONFIG_BLOCKED")) return "模型配置正在被 AI Run 使用，请先等待完成或取消 Run。";
   return message || "操作失败，请稍后重试。";
 }

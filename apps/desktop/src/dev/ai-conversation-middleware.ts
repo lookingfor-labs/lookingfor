@@ -11,6 +11,7 @@ import {
 import type { AiConversationDraft } from "@brainbuddy/domain";
 import {
   AnalyzeInputRequestSchema,
+  ConfigureModelConnectionRequestSchema,
   PrepareAgentRunRequestSchema,
   PrepareAiConversationRequestSchema,
   ProtectionRequestSchema,
@@ -18,6 +19,7 @@ import {
   SearchDemoSourcesRequestSchema
 } from "@brainbuddy/shared-contracts";
 import { LocalBackend } from "../backend/local-backend";
+import type { ModelConnection } from "../backend/model-connection-store";
 
 const memoryOperationSchema = z.discriminatedUnion("operation", [
   z.object({ operation: z.literal("create"), path: z.string(), content: z.string(), reason: z.string() }),
@@ -25,34 +27,43 @@ const memoryOperationSchema = z.discriminatedUnion("operation", [
 ]);
 
 export function aiConversationMiddleware(options: {
-  readonly apiKey: string;
   readonly dataDirectory: string;
-  readonly modelId?: string;
+  readonly initialModelConnection?: ModelConnection;
   readonly agentRunLogDirectory?: string;
 }): Plugin {
   let engine: AiConversationEngine | undefined;
   let agentRuntime: AgentRuntime | undefined;
   const drafts = new Map<string, AiConversationDraft>();
-  const backend = new LocalBackend({ dataDirectory: options.dataDirectory });
+  const backend = new LocalBackend({
+    dataDirectory: options.dataDirectory,
+    ...(options.initialModelConnection ? { initialModelConnection: options.initialModelConnection } : {})
+  });
   const activeAiRuns = new Set<string>();
   const activeAgentRuns = new Set<string>();
-  const getEngine = () => engine ??= createDeepSeekAiConversationEngine(options);
-  const getAgentRuntime = () => agentRuntime ??= createDeepSeekAgentRuntime({
-    apiKey: options.apiKey,
-    ...(options.modelId ? { modelId: options.modelId } : {}),
-    records: backend.records,
-    memories: backend.memories,
-    ...(options.agentRunLogDirectory
-      ? { recorder: createFileAgentRunRecorder({ directory: options.agentRunLogDirectory }) }
-      : {})
-  });
+  const getEngine = () => {
+    if (engine) return engine;
+    const connection = backend.requireModelConnection();
+    return engine = createDeepSeekAiConversationEngine(connection);
+  };
+  const getAgentRuntime = () => {
+    if (agentRuntime) return agentRuntime;
+    const connection = backend.requireModelConnection();
+    return agentRuntime = createDeepSeekAgentRuntime({
+      ...connection,
+      records: backend.records,
+      memories: backend.memories,
+      ...(options.agentRunLogDirectory
+        ? { recorder: createFileAgentRunRecorder({ directory: options.agentRunLogDirectory }) }
+        : {})
+    });
+  };
 
   return {
     name: "brainbuddy-ai-conversation-dev-server",
     configureServer(server) {
       server.httpServer?.once("close", () => backend.close());
       server.middlewares.use(async (request, response, next) => {
-        if (request.method !== "POST" || (!request.url?.startsWith("/api/privacy/") && !request.url?.startsWith("/api/ai-conversation/") && !request.url?.startsWith("/api/agent/") && !request.url?.startsWith("/api/memory/") && !request.url?.startsWith("/api/database/"))) return next();
+        if (request.method !== "POST" || (!request.url?.startsWith("/api/privacy/") && !request.url?.startsWith("/api/ai-conversation/") && !request.url?.startsWith("/api/agent/") && !request.url?.startsWith("/api/memory/") && !request.url?.startsWith("/api/database/") && !request.url?.startsWith("/api/model/"))) return next();
         try {
           if (request.url === "/api/privacy/analyze") {
             const { text } = AnalyzeInputRequestSchema.parse(await readJson(request));
@@ -200,6 +211,19 @@ export function aiConversationMiddleware(options: {
             drafts.clear();
             agentRuntime = undefined;
             return sendJson(response, 200, backend.resetDatabase());
+          }
+          if (request.url === "/api/model/connection-status") {
+            return sendJson(response, 200, backend.modelConnectionStatus());
+          }
+          if (request.url === "/api/model/configure-connection") {
+            const { apiKey, modelId } = ConfigureModelConnectionRequestSchema.parse(await readJson(request));
+            if (activeAiRuns.size || activeAgentRuns.size) {
+              return sendJson(response, 409, { error: "模型配置正在被 AI Run 使用，请先等待完成或取消 Run。" });
+            }
+            drafts.clear();
+            engine = undefined;
+            agentRuntime = undefined;
+            return sendJson(response, 200, backend.configureModelConnection(apiKey, modelId));
           }
           return sendJson(response, 404, { error: "Not found" });
         } catch (error) {

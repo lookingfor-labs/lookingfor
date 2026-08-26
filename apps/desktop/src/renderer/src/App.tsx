@@ -18,6 +18,7 @@ import type {
   MemoryRevertResult,
   MemoryWritePolicy,
   MemoryOperation,
+  ModelConnectionStatus,
   PreparedMemoryWrite,
   PrivacyAnalysis,
   ProtectionPolicy,
@@ -998,6 +999,17 @@ export async function saveSuggestedProtectedText(text: string): Promise<DemoSave
 export async function getDatabaseAccessStatus(): Promise<DatabaseAccessStatus> {
   if (window.brainBuddy) return window.brainBuddy.getDatabaseAccessStatus();
   return postJson<DatabaseAccessStatus>("/api/database/access-status", {});
+}
+
+export async function getModelConnectionStatus(): Promise<ModelConnectionStatus> {
+  if (window.brainBuddy) return window.brainBuddy.getModelConnectionStatus();
+  return postJson<ModelConnectionStatus>("/api/model/connection-status", {});
+}
+
+export async function configureModelConnection(apiKey: string, modelId?: string): Promise<ModelConnectionStatus> {
+  const request = { apiKey, ...(modelId ? { modelId } : {}) };
+  if (window.brainBuddy) return window.brainBuddy.configureModelConnection(request);
+  return postJson<ModelConnectionStatus>("/api/model/configure-connection", request);
 }
 
 export async function configureDatabasePassword(currentPassword: string | undefined, newPassword: string): Promise<DatabaseAccessStatus> {

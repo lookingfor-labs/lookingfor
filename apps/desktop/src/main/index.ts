@@ -9,6 +9,7 @@ import {
   type AgentRuntime
 } from "@brainbuddy/agent-runtime";
 import { LocalBackend } from "../backend/local-backend";
+import { modelConnectionFromEnvironment } from "../backend/model-connection-store";
 import {
   ANALYZE_INPUT_CHANNEL,
   AGENT_RUN_EVENT_CHANNEL,
@@ -22,7 +23,10 @@ import {
   CancelAiConversationRequestSchema,
   CONFIGURE_DATABASE_PASSWORD_CHANNEL,
   ConfigureDatabasePasswordRequestSchema,
+  CONFIGURE_MODEL_CONNECTION_CHANNEL,
+  ConfigureModelConnectionRequestSchema,
   GET_DATABASE_ACCESS_STATUS_CHANNEL,
+  GET_MODEL_CONNECTION_STATUS_CHANNEL,
   LIST_MEMORY_FILES_CHANNEL,
   LOCK_DATABASE_CHANNEL,
   PREPARE_AI_CONVERSATION_CHANNEL,
@@ -61,18 +65,23 @@ const aiRuns = new Map<string, AbortController>();
 const agentRuns = new Set<string>();
 
 function getAiConversationEngine(): AiConversationEngine {
-  aiConversationEngine ??= createDeepSeekAiConversationEngine({
-    apiKey: process.env.SECRET_DEEPSEEK_API_KEY ?? "",
-    ...(process.env.SECRET_DEEPSEEK_MODEL ? { modelId: process.env.SECRET_DEEPSEEK_MODEL } : {})
+  if (aiConversationEngine) return aiConversationEngine;
+  if (!localBackend) throw new Error("Local stores are not ready");
+  const connection = localBackend.requireModelConnection();
+  aiConversationEngine = createDeepSeekAiConversationEngine({
+    apiKey: connection.apiKey,
+    modelId: connection.modelId
   });
   return aiConversationEngine;
 }
 
 function getAgentRuntime(): AgentRuntime {
+  if (agentRuntime) return agentRuntime;
   if (!localBackend) throw new Error("Local stores are not ready");
-  agentRuntime ??= createDeepSeekAgentRuntime({
-    apiKey: process.env.SECRET_DEEPSEEK_API_KEY ?? "",
-    ...(process.env.SECRET_DEEPSEEK_MODEL ? { modelId: process.env.SECRET_DEEPSEEK_MODEL } : {}),
+  const connection = localBackend.requireModelConnection();
+  agentRuntime = createDeepSeekAgentRuntime({
+    apiKey: connection.apiKey,
+    modelId: connection.modelId,
     records: localBackend.records,
     memories: localBackend.memories,
     recorder: createFileAgentRunRecorder({ directory: join(app.getPath("userData"), "agent-runs") })
@@ -112,7 +121,11 @@ function createWindow(): void {
 
 app.whenReady().then(() => {
   const dataDirectory = app.getPath("userData");
-  localBackend = new LocalBackend({ dataDirectory });
+  const initialModelConnection = modelConnectionFromEnvironment(process.env);
+  localBackend = new LocalBackend({
+    dataDirectory,
+    ...(initialModelConnection ? { initialModelConnection } : {})
+  });
   ipcMain.handle(ANALYZE_INPUT_CHANNEL, (_event, request: unknown) => {
     const { text } = AnalyzeInputRequestSchema.parse(request);
     return localBackend!.analyze(text);
@@ -249,6 +262,15 @@ app.whenReady().then(() => {
     aiDrafts.clear();
     agentRuntime = undefined;
     return localBackend!.resetDatabase();
+  });
+  ipcMain.handle(GET_MODEL_CONNECTION_STATUS_CHANNEL, () => localBackend!.modelConnectionStatus());
+  ipcMain.handle(CONFIGURE_MODEL_CONNECTION_CHANNEL, (_event, request: unknown) => {
+    const { apiKey, modelId } = ConfigureModelConnectionRequestSchema.parse(request);
+    if (aiRuns.size || agentRuns.size) throw new Error("MODEL_CONFIG_BLOCKED: An AI Run is still active");
+    aiDrafts.clear();
+    aiConversationEngine = undefined;
+    agentRuntime = undefined;
+    return localBackend!.configureModelConnection(apiKey, modelId);
   });
   createWindow();
 

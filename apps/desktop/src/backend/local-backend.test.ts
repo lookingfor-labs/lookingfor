@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -32,6 +32,40 @@ describe("LocalBackend", () => {
     expect(() => reopened.reveal(receipt.sourceId)).toThrow("DATABASE_LOCKED");
     reopened.access.unlock("persistent-password");
     expect(reopened.reveal(receipt.sourceId).originalContent).toBe(original);
+    reopened.close();
+  });
+
+  it("imports, encrypts and persists the model connection behind a safe status", () => {
+    const dataDirectory = mkdtempSync(join(tmpdir(), "brainbuddy-local-backend-"));
+    directories.push(dataDirectory);
+    const importedKey = "sk-imported-deepseek-key-123456";
+    const replacementKey = "sk-replacement-deepseek-key-654321";
+    const first = new LocalBackend({
+      dataDirectory,
+      initialModelConnection: { apiKey: importedKey, modelId: "deepseek-chat" }
+    });
+
+    expect(first.modelConnectionStatus()).toEqual({
+      provider: "deepseek",
+      configured: true,
+      modelId: "deepseek-chat",
+      maskedApiKey: "sk-••••3456"
+    });
+    expect(first.requireModelConnection()).toEqual({ apiKey: importedKey, modelId: "deepseek-chat" });
+    first.configureModelConnection(replacementKey, "deepseek-reasoner");
+    first.close();
+
+    const metadataPath = join(dataDirectory, "model-connection.json");
+    const stored = readFileSync(metadataPath, "utf8");
+    expect(stored).not.toContain(importedKey);
+    expect(stored).not.toContain(replacementKey);
+    expect(statSync(metadataPath).mode & 0o777).toBe(0o600);
+
+    const reopened = new LocalBackend({
+      dataDirectory,
+      initialModelConnection: { apiKey: importedKey, modelId: "deepseek-chat" }
+    });
+    expect(reopened.requireModelConnection()).toEqual({ apiKey: replacementKey, modelId: "deepseek-reasoner" });
     reopened.close();
   });
 });

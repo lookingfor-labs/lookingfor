@@ -124,6 +124,13 @@ export interface DatabaseAccessStatus {
   readonly unlocked: boolean;
 }
 
+export interface ModelConnectionStatus {
+  readonly provider: "deepseek";
+  readonly configured: boolean;
+  readonly modelId: string;
+  readonly maskedApiKey?: string;
+}
+
 export interface DatabaseResetResult {
   readonly deletedSourceCount: number;
   readonly deletedCredentialCount: number;

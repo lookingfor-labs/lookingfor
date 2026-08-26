@@ -8,7 +8,9 @@ import {
   CANCEL_AI_CONVERSATION_CHANNEL,
   CANCEL_AGENT_RUN_CHANNEL,
   CONFIGURE_DATABASE_PASSWORD_CHANNEL,
+  CONFIGURE_MODEL_CONNECTION_CHANNEL,
   GET_DATABASE_ACCESS_STATUS_CHANNEL,
+  GET_MODEL_CONNECTION_STATUS_CHANNEL,
   LIST_MEMORY_FILES_CHANNEL,
   LOCK_DATABASE_CHANNEL,
   PREPARE_AI_CONVERSATION_CHANNEL,
@@ -57,7 +59,9 @@ const api: BrainBuddyApi = {
   configureDatabasePassword: (request) => ipcRenderer.invoke(CONFIGURE_DATABASE_PASSWORD_CHANNEL, request),
   unlockDatabase: (request) => ipcRenderer.invoke(UNLOCK_DATABASE_CHANNEL, request),
   lockDatabase: () => ipcRenderer.invoke(LOCK_DATABASE_CHANNEL),
-  resetDatabase: (request) => ipcRenderer.invoke(RESET_DATABASE_CHANNEL, request)
+  resetDatabase: (request) => ipcRenderer.invoke(RESET_DATABASE_CHANNEL, request),
+  getModelConnectionStatus: () => ipcRenderer.invoke(GET_MODEL_CONNECTION_STATUS_CHANNEL),
+  configureModelConnection: (request) => ipcRenderer.invoke(CONFIGURE_MODEL_CONNECTION_CHANNEL, request)
 };
 
 contextBridge.exposeInMainWorld("brainBuddy", api);

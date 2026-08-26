@@ -169,9 +169,12 @@ body.mvp-route { min-width: 0; background: #f6f7fb; }
 .mvp-status-pill.locked { background: #f0eefc; color: #5b50ac; }
 .mvp-status-pill.unset { background: #f0f1f5; color: #6a7282; }
 .mvp-password-form { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; border-top: 1px solid var(--mvp-line); padding-top: 16px; }
-.mvp-password-form label, .mvp-reset-confirm label { display: grid; gap: 7px; color: #4b5468; font-size: 10px; font-weight: 700; }
-.mvp-password-form input, .mvp-reset-confirm input { min-width: 0; min-height: 42px; border: 1px solid #d8dbe4; border-radius: 10px; background: var(--mvp-panel); padding: 0 11px; color: var(--mvp-text); outline: 0; }
-.mvp-password-form input:focus, .mvp-reset-confirm input:focus { border-color: #aaa1e8; box-shadow: 0 0 0 3px rgba(103, 86, 217, .1); }
+.mvp-model-form { display: grid; grid-template-columns: minmax(180px, .7fr) minmax(220px, 1fr); gap: 12px; border-top: 1px solid var(--mvp-line); padding-top: 16px; }
+.mvp-model-key { grid-column: 1 / -1; }
+.mvp-password-form label, .mvp-model-form label, .mvp-reset-confirm label { display: grid; gap: 7px; color: #4b5468; font-size: 10px; font-weight: 700; }
+.mvp-password-form input, .mvp-model-form input, .mvp-reset-confirm input { min-width: 0; min-height: 42px; border: 1px solid #d8dbe4; border-radius: 10px; background: var(--mvp-panel); padding: 0 11px; color: var(--mvp-text); outline: 0; }
+.mvp-model-form input:disabled { background: #f1f2f6; color: #737b8e; cursor: not-allowed; }
+.mvp-password-form input:focus, .mvp-model-form input:focus, .mvp-reset-confirm input:focus { border-color: #aaa1e8; box-shadow: 0 0 0 3px rgba(103, 86, 217, .1); }
 .mvp-form-actions { display: flex; grid-column: 1 / -1; justify-content: flex-end; gap: 8px; margin-top: 2px; }
 .mvp-field-note { margin: 12px 0 0 !important; color: var(--mvp-muted); font-size: 9px !important; }
 .mvp-danger-settings { border-color: #ead1d0; box-shadow: 0 10px 30px rgba(164, 60, 67, .045); }
@@ -213,7 +216,8 @@ body.mvp-route { min-width: 0; background: #f6f7fb; }
   .mvp-setting-card { grid-template-columns: 1fr; }.mvp-setting-card dl { grid-template-columns: 1fr; gap: 6px; }.mvp-setting-card dd { margin-bottom: 8px; }
   .mvp-unlock-bar { grid-template-columns: 22px minmax(0, 1fr); }.mvp-unlock-bar input, .mvp-unlock-bar button { grid-column: 2; }
   .mvp-setting-heading, .mvp-danger-row { align-items: stretch; flex-direction: column; }
-  .mvp-password-form, .mvp-reset-confirm { grid-template-columns: 1fr; }
+  .mvp-password-form, .mvp-model-form, .mvp-reset-confirm { grid-template-columns: 1fr; }
+  .mvp-model-key { grid-column: auto; }
   .mvp-reset-confirm > div:first-child { grid-column: auto; }
 }
 

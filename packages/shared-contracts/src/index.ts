@@ -11,7 +11,8 @@ import type {
   ProtectionPreview,
   MemoryFile,
   MemoryResetResult,
-  MemoryRevertResult
+  MemoryRevertResult,
+  ModelConnectionStatus
 } from "@brainbuddy/domain";
 import type {
   AgentRunDraft,
@@ -42,6 +43,8 @@ export const CONFIGURE_DATABASE_PASSWORD_CHANNEL = "database:configure-password"
 export const UNLOCK_DATABASE_CHANNEL = "database:unlock";
 export const LOCK_DATABASE_CHANNEL = "database:lock";
 export const RESET_DATABASE_CHANNEL = "database:reset";
+export const GET_MODEL_CONNECTION_STATUS_CHANNEL = "model:connection-status";
+export const CONFIGURE_MODEL_CONNECTION_CHANNEL = "model:configure-connection";
 
 export const AnalyzeInputRequestSchema = z.object({
   text: z.string().max(20_000)
@@ -100,6 +103,10 @@ export const ConfigureDatabasePasswordRequestSchema = z.object({
 });
 export const UnlockDatabaseRequestSchema = z.object({ password: z.string().min(1).max(128) });
 export const ResetDatabaseRequestSchema = z.object({ confirmation: z.literal("清除数据库") });
+export const ConfigureModelConnectionRequestSchema = z.object({
+  apiKey: z.string().trim().min(8).max(512),
+  modelId: z.string().trim().min(1).max(100).optional()
+});
 
 export type SearchDemoSourcesRequest = z.infer<typeof SearchDemoSourcesRequestSchema>;
 export type RevealDemoSourceRequest = z.infer<typeof RevealDemoSourceRequestSchema>;
@@ -133,6 +140,7 @@ export type RevertMemoryRevisionRequest = z.infer<typeof RevertMemoryRevisionReq
 export type ConfigureDatabasePasswordRequest = z.infer<typeof ConfigureDatabasePasswordRequestSchema>;
 export type UnlockDatabaseRequest = z.infer<typeof UnlockDatabaseRequestSchema>;
 export type ResetDatabaseRequest = z.infer<typeof ResetDatabaseRequestSchema>;
+export type ConfigureModelConnectionRequest = z.infer<typeof ConfigureModelConnectionRequestSchema>;
 
 export interface AiConversationRunEvent {
   readonly runId: string;
@@ -168,4 +176,6 @@ export interface BrainBuddyApi {
   unlockDatabase(request: UnlockDatabaseRequest): Promise<DatabaseAccessStatus>;
   lockDatabase(): Promise<DatabaseAccessStatus>;
   resetDatabase(request: ResetDatabaseRequest): Promise<DatabaseResetResult>;
+  getModelConnectionStatus(): Promise<ModelConnectionStatus>;
+  configureModelConnection(request: ConfigureModelConnectionRequest): Promise<ModelConnectionStatus>;
 }

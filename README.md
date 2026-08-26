@@ -18,7 +18,9 @@ npm run dev
 SECRET_DEEPSEEK_API_KEY=your-key
 ```
 
-密钥只由 Electron 主进程或浏览器验收模式的 Vite 服务端中间件读取，不会注入 Renderer。不要使用 `VITE_` 前缀保存密钥。
+该环境变量只用于首次没有本地模型配置时导入。之后可在设置页配置或替换 DeepSeek Key；Electron 与 `desktop-dev` 都由共享本地后端加密保存，并且状态接口不会返回密钥明文。
+
+环境变量只由 Electron 主进程或浏览器验收模式的 Vite 服务端中间件用于首次导入，不会注入 Renderer。不要使用 `VITE_` 前缀保存密钥。
 
 其他命令：
 

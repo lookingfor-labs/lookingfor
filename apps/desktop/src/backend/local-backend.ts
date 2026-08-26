@@ -7,6 +7,7 @@ import type {
   DemoOfflineSearchResult,
   DemoSaveReceipt,
   DemoSourceReveal,
+  ModelConnectionStatus,
   ProtectionDecision,
   ProtectionPreview,
   SourceSubmissionKind
@@ -15,6 +16,7 @@ import { DatabaseAccessGate } from "@brainbuddy/memory-engine/access";
 import { FileMemoryStore, type MemoryStore } from "@brainbuddy/memory-engine/memory";
 import { SqliteSourceStore } from "@brainbuddy/memory-engine/sqlite";
 import { buildProtectionPlan, PrivacyEngine, toProtectionPreview } from "@brainbuddy/privacy-engine";
+import { ModelConnectionStore, type ModelConnection } from "./model-connection-store";
 
 export class LocalBackend {
   readonly memories: MemoryStore;
@@ -31,12 +33,19 @@ export class LocalBackend {
     }]
   });
   readonly #sources: SqliteSourceStore;
+  readonly #modelConnection: ModelConnectionStore;
 
-  constructor(options: { readonly dataDirectory: string }) {
+  constructor(options: { readonly dataDirectory: string; readonly initialModelConnection?: ModelConnection }) {
     mkdirSync(options.dataDirectory, { recursive: true });
+    const encryptionKey = loadEncryptionKey(options.dataDirectory);
     this.#sources = new SqliteSourceStore({
       databasePath: join(options.dataDirectory, "brainbuddy.sqlite"),
-      encryptionKey: loadEncryptionKey(options.dataDirectory)
+      encryptionKey
+    });
+    this.#modelConnection = new ModelConnectionStore({
+      metadataPath: join(options.dataDirectory, "model-connection.json"),
+      encryptionKey,
+      ...(options.initialModelConnection ? { initialConnection: options.initialModelConnection } : {})
     });
     this.memories = new FileMemoryStore({ rootDirectory: join(options.dataDirectory, "memories") });
     this.access = new DatabaseAccessGate({ metadataPath: join(options.dataDirectory, "database-access.json") });
@@ -86,6 +95,18 @@ export class LocalBackend {
   resetDatabase(): DatabaseResetResult {
     this.access.assertUnlocked();
     return this.#sources.reset();
+  }
+
+  modelConnectionStatus(): ModelConnectionStatus {
+    return this.#modelConnection.status();
+  }
+
+  configureModelConnection(apiKey: string, modelId?: string): ModelConnectionStatus {
+    return this.#modelConnection.configure(apiKey, modelId);
+  }
+
+  requireModelConnection(): ModelConnection {
+    return this.#modelConnection.requireConnection();
   }
 
   close(): void {
