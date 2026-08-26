@@ -152,4 +152,22 @@ describe("SqliteSourceStore", () => {
     expect(store.searchOffline("").sources.map(({ kind }) => kind)).toEqual(["local_search", "capture"]);
     store.close();
   });
+
+  it("atomically resets source, credential, and link records", () => {
+    const directory = mkdtempSync(join(tmpdir(), "brainbuddy-source-reset-"));
+    directories.push(directory);
+    const store = new SqliteSourceStore({
+      databasePath: join(directory, "brainbuddy.sqlite"),
+      encryptionKey: Buffer.alloc(32, 7),
+      sourceIdFactory: () => "SOURCE_RESET"
+    });
+    const receipt = store.save(plan(), "应被清除的原文");
+
+    expect(store.reset()).toEqual({ deletedSourceCount: 1, deletedCredentialCount: 1 });
+    expect(store.searchOffline("")).toEqual({ sources: [], credentials: [] });
+    expect(store.hasSource(receipt.sourceId)).toBe(false);
+    expect(store.hasCredential(firstCredentialId)).toBe(false);
+    expect(() => store.revealSource(receipt.sourceId)).toThrow("Source record not found");
+    store.close();
+  });
 });

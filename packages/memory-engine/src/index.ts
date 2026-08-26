@@ -1,6 +1,7 @@
 import type {
   CredentialDraft,
   DemoCredentialSummary,
+  DatabaseResetResult,
   DemoOfflineSearchResult,
   DemoSourceSummary,
   DemoSaveReceipt,
@@ -117,5 +118,17 @@ export class DemoSourceSession {
     const source = this.#sources.get(sourceId);
     if (!source) throw new Error("Source record not found");
     return source;
+  }
+
+  reset(): DatabaseResetResult {
+    const result = {
+      deletedSourceCount: this.#sources.size,
+      deletedCredentialCount: this.#credentials.size
+    };
+    this.#sources.clear();
+    this.#summaries.clear();
+    this.#credentials.clear();
+    this.#sequence = 0;
+    return result;
   }
 }

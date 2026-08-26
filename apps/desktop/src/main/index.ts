@@ -12,6 +12,7 @@ import {
 } from "@brainbuddy/agent-runtime";
 import { FileMemoryStore, type MemoryStore } from "@brainbuddy/memory-engine/memory";
 import { SqliteSourceStore } from "@brainbuddy/memory-engine/sqlite";
+import { DatabaseAccessGate } from "@brainbuddy/memory-engine/access";
 import { buildProtectionPlan, PrivacyEngine, toProtectionPreview } from "@brainbuddy/privacy-engine";
 import {
   ANALYZE_INPUT_CHANNEL,
@@ -24,7 +25,11 @@ import {
   CANCEL_AGENT_RUN_CHANNEL,
   CancelAgentRunRequestSchema,
   CancelAiConversationRequestSchema,
+  CONFIGURE_DATABASE_PASSWORD_CHANNEL,
+  ConfigureDatabasePasswordRequestSchema,
+  GET_DATABASE_ACCESS_STATUS_CHANNEL,
   LIST_MEMORY_FILES_CHANNEL,
+  LOCK_DATABASE_CHANNEL,
   PREPARE_AI_CONVERSATION_CHANNEL,
   PREPARE_AGENT_RUN_CHANNEL,
   PrepareAgentRunRequestSchema,
@@ -34,6 +39,8 @@ import {
   REVEAL_DEMO_SOURCE_CHANNEL,
   RESOLVE_AGENT_APPROVAL_CHANNEL,
   RESET_MEMORY_CONTEXT_CHANNEL,
+  RESET_DATABASE_CHANNEL,
+  ResetDatabaseRequestSchema,
   ResolveAgentApprovalRequestSchema,
   REVERT_MEMORY_REVISION_CHANNEL,
   RevertMemoryRevisionRequestSchema,
@@ -44,7 +51,9 @@ import {
   START_AI_CONVERSATION_CHANNEL,
   START_AGENT_RUN_CHANNEL,
   StartAgentRunRequestSchema,
-  StartAiConversationRequestSchema
+  StartAiConversationRequestSchema,
+  UNLOCK_DATABASE_CHANNEL,
+  UnlockDatabaseRequestSchema
 } from "@brainbuddy/shared-contracts";
 
 loadDotEnv({ quiet: true });
@@ -62,6 +71,7 @@ const privacyEngine = new PrivacyEngine({
   ]
 });
 let sourceStore: SqliteSourceStore | undefined;
+let databaseAccess: DatabaseAccessGate | undefined;
 let memoryStore: MemoryStore | undefined;
 let aiConversationEngine: AiConversationEngine | undefined;
 let agentRuntime: AgentRuntime | undefined;
@@ -177,6 +187,7 @@ app.whenReady().then(() => {
     databasePath: join(dataDirectory, "brainbuddy.sqlite"),
     encryptionKey: loadEncryptionKey(dataDirectory)
   });
+  databaseAccess = new DatabaseAccessGate({ metadataPath: join(dataDirectory, "database-access.json") });
   memoryStore = new FileMemoryStore({ rootDirectory: join(dataDirectory, "memories") });
   ipcMain.handle(ANALYZE_INPUT_CHANNEL, (_event, request: unknown) => {
     const { text } = AnalyzeInputRequestSchema.parse(request);
@@ -194,6 +205,7 @@ app.whenReady().then(() => {
   });
   ipcMain.handle(REVEAL_DEMO_SOURCE_CHANNEL, (_event, request: unknown) => {
     const { sourceId } = RevealDemoSourceRequestSchema.parse(request);
+    databaseAccess!.assertUnlocked();
     return sourceStore!.revealSource(sourceId);
   });
   ipcMain.handle(PREPARE_AI_CONVERSATION_CHANNEL, (_event, request: unknown) => {
@@ -296,6 +308,24 @@ app.whenReady().then(() => {
     return memoryStore!.reset();
   });
   ipcMain.handle(LIST_MEMORY_FILES_CHANNEL, () => memoryStore!.list());
+  ipcMain.handle(GET_DATABASE_ACCESS_STATUS_CHANNEL, () => databaseAccess!.status());
+  ipcMain.handle(CONFIGURE_DATABASE_PASSWORD_CHANNEL, (_event, request: unknown) => {
+    const { currentPassword, newPassword } = ConfigureDatabasePasswordRequestSchema.parse(request);
+    return databaseAccess!.configure(currentPassword, newPassword);
+  });
+  ipcMain.handle(UNLOCK_DATABASE_CHANNEL, (_event, request: unknown) => {
+    const { password } = UnlockDatabaseRequestSchema.parse(request);
+    return databaseAccess!.unlock(password);
+  });
+  ipcMain.handle(LOCK_DATABASE_CHANNEL, () => databaseAccess!.lock());
+  ipcMain.handle(RESET_DATABASE_CHANNEL, (_event, request: unknown) => {
+    ResetDatabaseRequestSchema.parse(request);
+    if (aiRuns.size || agentRuns.size) throw new Error("DATABASE_RESET_BLOCKED: A Run is still active");
+    databaseAccess!.assertUnlocked();
+    aiDrafts.clear();
+    agentRuntime = undefined;
+    return sourceStore!.reset();
+  });
   createWindow();
 
   app.on("activate", () => {
@@ -316,5 +346,6 @@ app.on("before-quit", () => {
   agentRuntime = undefined;
   sourceStore?.close();
   sourceStore = undefined;
+  databaseAccess = undefined;
   memoryStore = undefined;
 });

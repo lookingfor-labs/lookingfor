@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./access": "./src/database-access.ts",
     "./memory": "./src/memory-store.ts",
     "./sqlite": "./src/sqlite-source-store.ts"
   },

@@ -103,4 +103,15 @@ describe("DemoSourceSession", () => {
     expect(session.revealSource(receipt.sourceId).originalContent).toBe("只有手动操作才能看到的原始内容");
     expect(() => session.revealSource("SOURCE_DEMO_999")).toThrow("Source record not found");
   });
+
+  it("resets all source and credential records without retaining the sequence", () => {
+    const session = new DemoSourceSession();
+    const first = session.save(safePlan, "第一条原文");
+
+    expect(session.reset()).toEqual({ deletedSourceCount: 1, deletedCredentialCount: 1 });
+    expect(session.searchOffline("")).toEqual({ sources: [], credentials: [] });
+    expect(() => session.revealSource(first.sourceId)).toThrow("Source record not found");
+    expect(session.save({ ...safePlan, credentialDrafts: [], protectedContent: "普通输入" }, "重新开始").sourceId)
+      .toBe("SOURCE_DEMO_001");
+  });
 });

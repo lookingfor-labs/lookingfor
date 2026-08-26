@@ -2,6 +2,8 @@ import { z } from "zod";
 import type {
   DemoSaveReceipt,
   DemoOfflineSearchResult,
+  DatabaseAccessStatus,
+  DatabaseResetResult,
   AiConversationDraft,
   AiConversationEvent,
   DemoSourceReveal,
@@ -35,6 +37,11 @@ export const AGENT_RUN_EVENT_CHANNEL = "agent:run-event";
 export const REVERT_MEMORY_REVISION_CHANNEL = "memory:revert-revision";
 export const RESET_MEMORY_CONTEXT_CHANNEL = "memory:reset-test-context";
 export const LIST_MEMORY_FILES_CHANNEL = "memory:list-files";
+export const GET_DATABASE_ACCESS_STATUS_CHANNEL = "database:access-status";
+export const CONFIGURE_DATABASE_PASSWORD_CHANNEL = "database:configure-password";
+export const UNLOCK_DATABASE_CHANNEL = "database:unlock";
+export const LOCK_DATABASE_CHANNEL = "database:lock";
+export const RESET_DATABASE_CHANNEL = "database:reset";
 
 export const AnalyzeInputRequestSchema = z.object({
   text: z.string().max(20_000)
@@ -87,6 +94,12 @@ export const ResolveAgentApprovalRequestSchema = z.object({
 });
 export const CancelAgentRunRequestSchema = z.object({ runId: z.string().uuid() });
 export const RevertMemoryRevisionRequestSchema = z.object({ revisionId: z.string().uuid() });
+export const ConfigureDatabasePasswordRequestSchema = z.object({
+  currentPassword: z.string().max(128).optional(),
+  newPassword: z.string().min(8).max(128)
+});
+export const UnlockDatabaseRequestSchema = z.object({ password: z.string().min(1).max(128) });
+export const ResetDatabaseRequestSchema = z.object({ confirmation: z.literal("清除数据库") });
 
 export type SearchDemoSourcesRequest = z.infer<typeof SearchDemoSourcesRequestSchema>;
 export type RevealDemoSourceRequest = z.infer<typeof RevealDemoSourceRequestSchema>;
@@ -117,6 +130,9 @@ export type StartAgentRunRequest = z.infer<typeof StartAgentRunRequestSchema>;
 export type ResolveAgentApprovalRequest = z.infer<typeof ResolveAgentApprovalRequestSchema>;
 export type CancelAgentRunRequest = z.infer<typeof CancelAgentRunRequestSchema>;
 export type RevertMemoryRevisionRequest = z.infer<typeof RevertMemoryRevisionRequestSchema>;
+export type ConfigureDatabasePasswordRequest = z.infer<typeof ConfigureDatabasePasswordRequestSchema>;
+export type UnlockDatabaseRequest = z.infer<typeof UnlockDatabaseRequestSchema>;
+export type ResetDatabaseRequest = z.infer<typeof ResetDatabaseRequestSchema>;
 
 export interface AiConversationRunEvent {
   readonly runId: string;
@@ -147,4 +163,9 @@ export interface BrainBuddyApi {
   revertMemoryRevision(request: RevertMemoryRevisionRequest): Promise<MemoryRevertResult>;
   resetMemoryTestContext(): Promise<MemoryResetResult>;
   listMemoryFiles(): Promise<readonly MemoryFile[]>;
+  getDatabaseAccessStatus(): Promise<DatabaseAccessStatus>;
+  configureDatabasePassword(request: ConfigureDatabasePasswordRequest): Promise<DatabaseAccessStatus>;
+  unlockDatabase(request: UnlockDatabaseRequest): Promise<DatabaseAccessStatus>;
+  lockDatabase(): Promise<DatabaseAccessStatus>;
+  resetDatabase(request: ResetDatabaseRequest): Promise<DatabaseResetResult>;
 }

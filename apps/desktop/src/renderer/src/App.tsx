@@ -4,6 +4,8 @@ import type {
   AiConversationDraft,
   AiConversationEvent,
   AiConversationResponse,
+  DatabaseAccessStatus,
+  DatabaseResetResult,
   DemoCredentialSummary,
   DemoOfflineSearchResult,
   DemoSaveReceipt,
@@ -841,6 +843,7 @@ async function searchDemoSources(query: string): Promise<DemoOfflineSearchResult
 
 async function revealDemoSource(sourceId: string): Promise<DemoSourceReveal> {
   if (window.brainBuddy) return window.brainBuddy.revealDemoSource({ sourceId });
+  if (!browserDatabaseUnlocked) throw new Error("请先解锁本地数据库。");
   return (await browserRuntime()).session.revealSource(sourceId);
 }
 
@@ -1043,6 +1046,47 @@ export async function saveSuggestedProtectedText(text: string): Promise<DemoSave
   });
 }
 
+let browserDatabaseVerifier: { readonly salt: Uint8Array; readonly hash: Uint8Array } | undefined;
+let browserDatabaseUnlocked = true;
+
+export async function getDatabaseAccessStatus(): Promise<DatabaseAccessStatus> {
+  if (window.brainBuddy) return window.brainBuddy.getDatabaseAccessStatus();
+  return { passwordConfigured: Boolean(browserDatabaseVerifier), unlocked: browserDatabaseUnlocked };
+}
+
+export async function configureDatabasePassword(currentPassword: string | undefined, newPassword: string): Promise<DatabaseAccessStatus> {
+  if (window.brainBuddy) return window.brainBuddy.configureDatabasePassword({ currentPassword, newPassword });
+  if (newPassword.length < 8 || newPassword.length > 128) throw new Error("数据库密码需要 8–128 个字符。");
+  if (browserDatabaseVerifier && (!currentPassword || !await verifyBrowserPassword(currentPassword))) {
+    throw new Error("当前数据库密码不正确。");
+  }
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  browserDatabaseVerifier = { salt, hash: await deriveBrowserPassword(newPassword, salt) };
+  browserDatabaseUnlocked = true;
+  return getDatabaseAccessStatus();
+}
+
+export async function unlockDatabase(password: string): Promise<DatabaseAccessStatus> {
+  if (window.brainBuddy) return window.brainBuddy.unlockDatabase({ password });
+  if (!browserDatabaseVerifier) return getDatabaseAccessStatus();
+  if (!await verifyBrowserPassword(password)) throw new Error("数据库密码不正确。");
+  browserDatabaseUnlocked = true;
+  return getDatabaseAccessStatus();
+}
+
+export async function lockDatabase(): Promise<DatabaseAccessStatus> {
+  if (window.brainBuddy) return window.brainBuddy.lockDatabase();
+  if (browserDatabaseVerifier) browserDatabaseUnlocked = false;
+  return getDatabaseAccessStatus();
+}
+
+export async function resetDatabase(): Promise<DatabaseResetResult> {
+  if (window.brainBuddy) return window.brainBuddy.resetDatabase({ confirmation: "清除数据库" });
+  if (!browserDatabaseUnlocked) throw new Error("请先解锁本地数据库。");
+  await postJson("/api/database/reset", { confirmation: "清除数据库" });
+  return (await browserRuntime()).session.reset();
+}
+
 export {
   cancelAgentRun,
   prepareAgentRun,
@@ -1051,6 +1095,19 @@ export {
   searchDemoSources,
   streamAgentRun
 };
+
+async function verifyBrowserPassword(password: string): Promise<boolean> {
+  if (!browserDatabaseVerifier) return true;
+  const candidate = await deriveBrowserPassword(password, browserDatabaseVerifier.salt);
+  return candidate.length === browserDatabaseVerifier.hash.length
+    && candidate.every((value, index) => value === browserDatabaseVerifier!.hash[index]);
+}
+
+async function deriveBrowserPassword(password: string, salt: Uint8Array): Promise<Uint8Array> {
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(password), "PBKDF2", false, ["deriveBits"]);
+  const bits = await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt: salt as BufferSource, iterations: 120_000 }, key, 256);
+  return new Uint8Array(bits);
+}
 
 function isTerminalAgentEvent(event: AgentRuntimeEvent): boolean {
   return event.type === "agent_completed" || event.type === "agent_failed" || event.type === "agent_cancelled";

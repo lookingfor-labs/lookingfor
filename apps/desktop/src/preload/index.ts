@@ -7,18 +7,23 @@ import {
   APPLY_MEMORY_OPERATION_CHANNEL,
   CANCEL_AI_CONVERSATION_CHANNEL,
   CANCEL_AGENT_RUN_CHANNEL,
+  CONFIGURE_DATABASE_PASSWORD_CHANNEL,
+  GET_DATABASE_ACCESS_STATUS_CHANNEL,
   LIST_MEMORY_FILES_CHANNEL,
+  LOCK_DATABASE_CHANNEL,
   PREPARE_AI_CONVERSATION_CHANNEL,
   PREPARE_AGENT_RUN_CHANNEL,
   PREVIEW_PROTECTION_CHANNEL,
   REVEAL_DEMO_SOURCE_CHANNEL,
   RESOLVE_AGENT_APPROVAL_CHANNEL,
   RESET_MEMORY_CONTEXT_CHANNEL,
+  RESET_DATABASE_CHANNEL,
   REVERT_MEMORY_REVISION_CHANNEL,
   SEARCH_DEMO_SOURCES_CHANNEL,
   SAVE_DEMO_CANDIDATE_CHANNEL,
   START_AI_CONVERSATION_CHANNEL,
-  START_AGENT_RUN_CHANNEL
+  START_AGENT_RUN_CHANNEL,
+  UNLOCK_DATABASE_CHANNEL
 } from "@brainbuddy/shared-contracts";
 
 const api: BrainBuddyApi = {
@@ -47,7 +52,12 @@ const api: BrainBuddyApi = {
   },
   revertMemoryRevision: (request) => ipcRenderer.invoke(REVERT_MEMORY_REVISION_CHANNEL, request),
   resetMemoryTestContext: () => ipcRenderer.invoke(RESET_MEMORY_CONTEXT_CHANNEL),
-  listMemoryFiles: () => ipcRenderer.invoke(LIST_MEMORY_FILES_CHANNEL)
+  listMemoryFiles: () => ipcRenderer.invoke(LIST_MEMORY_FILES_CHANNEL),
+  getDatabaseAccessStatus: () => ipcRenderer.invoke(GET_DATABASE_ACCESS_STATUS_CHANNEL),
+  configureDatabasePassword: (request) => ipcRenderer.invoke(CONFIGURE_DATABASE_PASSWORD_CHANNEL, request),
+  unlockDatabase: (request) => ipcRenderer.invoke(UNLOCK_DATABASE_CHANNEL, request),
+  lockDatabase: () => ipcRenderer.invoke(LOCK_DATABASE_CHANNEL),
+  resetDatabase: (request) => ipcRenderer.invoke(RESET_DATABASE_CHANNEL, request)
 };
 
 contextBridge.exposeInMainWorld("brainBuddy", api);

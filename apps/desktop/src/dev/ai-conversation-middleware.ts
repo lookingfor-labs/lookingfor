@@ -83,6 +83,7 @@ class BrowserProtectedRecords implements ProtectedRecordReader {
 
   sourceExists(sourceId: string): boolean { return this.#sources.has(sourceId); }
   credentialExists(credentialId: string): boolean { return this.#credentials.has(credentialId); }
+  reset(): void { this.#sources.clear(); this.#credentials.clear(); }
 }
 
 export function aiConversationMiddleware(options: {
@@ -95,6 +96,7 @@ export function aiConversationMiddleware(options: {
   const drafts = new Map<string, AiConversationDraft>();
   const memories = new DemoMemorySession();
   const records = new BrowserProtectedRecords();
+  const activeAiRuns = new Set<string>();
   const activeAgentRuns = new Set<string>();
   const getEngine = () => engine ??= createDeepSeekAiConversationEngine(options);
   const getAgentRuntime = () => agentRuntime ??= createDeepSeekAgentRuntime({
@@ -111,7 +113,7 @@ export function aiConversationMiddleware(options: {
     name: "brainbuddy-ai-conversation-dev-server",
     configureServer(server) {
       server.middlewares.use(async (request, response, next) => {
-        if (request.method !== "POST" || (!request.url?.startsWith("/api/ai-conversation/") && !request.url?.startsWith("/api/agent/") && !request.url?.startsWith("/api/memory/"))) return next();
+        if (request.method !== "POST" || (!request.url?.startsWith("/api/ai-conversation/") && !request.url?.startsWith("/api/agent/") && !request.url?.startsWith("/api/memory/") && !request.url?.startsWith("/api/database/"))) return next();
         try {
           if (request.url === "/api/ai-conversation/prepare") {
             const input = prepareSchema.parse(await readJson(request)) as Omit<AiConversationInput, "memories">;
@@ -126,17 +128,22 @@ export function aiConversationMiddleware(options: {
             drafts.delete(draftId);
             const runId = randomUUID();
             const controller = new AbortController();
+            activeAiRuns.add(runId);
             request.once("aborted", () => controller.abort());
             response.writeHead(200, {
               "content-type": "application/x-ndjson; charset=utf-8",
               "cache-control": "no-store",
               connection: "keep-alive"
             });
-            await getEngine().run(draft, {
-              signal: controller.signal,
-              onEvent: (event) => response.write(`${JSON.stringify({ runId, event })}\n`)
-            });
-            return response.end();
+            try {
+              await getEngine().run(draft, {
+                signal: controller.signal,
+                onEvent: (event) => response.write(`${JSON.stringify({ runId, event })}\n`)
+              });
+              return response.end();
+            } finally {
+              activeAiRuns.delete(runId);
+            }
           }
           if (request.url === "/api/ai-conversation/apply-memory") {
             const { operation } = z.object({ operation: memoryOperationSchema }).parse(await readJson(request));
@@ -191,6 +198,16 @@ export function aiConversationMiddleware(options: {
             return sendJson(response, 200, memories.reset());
           }
           if (request.url === "/api/memory/list") return sendJson(response, 200, memories.list());
+          if (request.url === "/api/database/reset") {
+            z.object({ confirmation: z.literal("清除数据库") }).parse(await readJson(request));
+            if (activeAiRuns.size || activeAgentRuns.size) {
+              return sendJson(response, 409, { error: "数据库正在被 Run 使用，请先等待完成或取消 Run。" });
+            }
+            drafts.clear();
+            records.reset();
+            agentRuntime = undefined;
+            return sendJson(response, 200, { ready: true });
+          }
           return sendJson(response, 404, { error: "Not found" });
         } catch (error) {
           if (response.headersSent) {

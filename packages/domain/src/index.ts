@@ -119,6 +119,16 @@ export interface DemoOfflineSearchResult {
   readonly credentials: readonly DemoCredentialSummary[];
 }
 
+export interface DatabaseAccessStatus {
+  readonly passwordConfigured: boolean;
+  readonly unlocked: boolean;
+}
+
+export interface DatabaseResetResult {
+  readonly deletedSourceCount: number;
+  readonly deletedCredentialCount: number;
+}
+
 export type AiActionIntent =
   | {
       readonly kind: "tool_call";

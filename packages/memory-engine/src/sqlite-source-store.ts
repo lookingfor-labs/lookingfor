@@ -3,6 +3,7 @@ import { DatabaseSync } from "node:sqlite";
 import type {
   CredentialDraft,
   DemoCredentialSummary,
+  DatabaseResetResult,
   DemoOfflineSearchResult,
   DemoSaveReceipt,
   DemoSourceReveal,
@@ -152,6 +153,19 @@ export class SqliteSourceStore {
 
   hasCredential(credentialId: string): boolean {
     return this.#credentialExists(credentialId);
+  }
+
+  reset(): DatabaseResetResult {
+    const deletedSourceCount = Number((this.#database.prepare("SELECT count(*) AS count FROM sources").get() as { count: number }).count);
+    const deletedCredentialCount = Number((this.#database.prepare("SELECT count(*) AS count FROM credentials").get() as { count: number }).count);
+    this.#database.exec("BEGIN IMMEDIATE");
+    try {
+      this.#database.exec("DELETE FROM sources; DELETE FROM credentials; COMMIT");
+      return { deletedSourceCount, deletedCredentialCount };
+    } catch (error) {
+      this.#database.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   close(): void {
