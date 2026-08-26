@@ -10,6 +10,7 @@ import {
   type ProtectedRecordReader
 } from "@brainbuddy/agent-runtime";
 import { DemoMemorySession } from "@brainbuddy/memory-engine/memory";
+import { DatabaseAccessGate } from "@brainbuddy/memory-engine/access";
 import type {
   AiConversationDraft,
   AiConversationInput,
@@ -96,6 +97,7 @@ export function aiConversationMiddleware(options: {
   const drafts = new Map<string, AiConversationDraft>();
   const memories = new DemoMemorySession();
   const records = new BrowserProtectedRecords();
+  const databaseAccess = new DatabaseAccessGate();
   const activeAiRuns = new Set<string>();
   const activeAgentRuns = new Set<string>();
   const getEngine = () => engine ??= createDeepSeekAiConversationEngine(options);
@@ -198,11 +200,33 @@ export function aiConversationMiddleware(options: {
             return sendJson(response, 200, memories.reset());
           }
           if (request.url === "/api/memory/list") return sendJson(response, 200, memories.list());
+          if (request.url === "/api/database/access-status") {
+            return sendJson(response, 200, databaseAccess.status());
+          }
+          if (request.url === "/api/database/configure-password") {
+            const input = z.object({
+              currentPassword: z.string().max(128).optional(),
+              newPassword: z.string().min(8).max(128)
+            }).parse(await readJson(request));
+            return sendJson(response, 200, databaseAccess.configure(input.currentPassword, input.newPassword));
+          }
+          if (request.url === "/api/database/unlock") {
+            const { password } = z.object({ password: z.string().min(1).max(128) }).parse(await readJson(request));
+            return sendJson(response, 200, databaseAccess.unlock(password));
+          }
+          if (request.url === "/api/database/lock") {
+            return sendJson(response, 200, databaseAccess.lock());
+          }
+          if (request.url === "/api/database/assert-access") {
+            databaseAccess.assertUnlocked();
+            return sendJson(response, 200, { unlocked: true });
+          }
           if (request.url === "/api/database/reset") {
             z.object({ confirmation: z.literal("清除数据库") }).parse(await readJson(request));
             if (activeAiRuns.size || activeAgentRuns.size) {
               return sendJson(response, 409, { error: "数据库正在被 Run 使用，请先等待完成或取消 Run。" });
             }
+            databaseAccess.assertUnlocked();
             drafts.clear();
             records.reset();
             agentRuntime = undefined;
