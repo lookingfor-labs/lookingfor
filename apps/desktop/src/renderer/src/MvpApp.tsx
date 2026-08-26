@@ -50,6 +50,7 @@ import {
 } from "./App";
 
 type MvpPage = "home" | "database" | "memories" | "settings";
+type DatabaseRecordTab = "saved" | "conversation";
 
 const navigation = [
   { id: "home", label: "主页", icon: House },
@@ -202,6 +203,7 @@ function SectionTitle({ icon, title, copy }: { readonly icon: JSX.Element; reado
 }
 
 function DatabasePage({ refreshToken }: { readonly refreshToken: number }): JSX.Element {
+  const [activeTab, setActiveTab] = useState<DatabaseRecordTab>("saved");
   const [query, setQuery] = useState("");
   const [sources, setSources] = useState<readonly DemoSourceSummary[]>([]);
   const [credentials, setCredentials] = useState<readonly DemoCredentialSummary[]>([]);
@@ -219,9 +221,10 @@ function DatabasePage({ refreshToken }: { readonly refreshToken: number }): JSX.
     setRevealed(undefined);
     try {
       const result = await searchDemoSources(search);
+      const nextVisibleSources = result.sources.filter(({ kind }) => databaseRecordTab(kind) === activeTab);
       setSources(result.sources);
       setCredentials(result.credentials);
-      setSelectedId((current) => result.sources.some(({ sourceId }) => sourceId === current) ? current : result.sources[0]?.sourceId);
+      setSelectedId((current) => nextVisibleSources.some(({ sourceId }) => sourceId === current) ? current : nextVisibleSources[0]?.sourceId);
     } catch (cause) {
       setError(messageFrom(cause));
     } finally {
@@ -233,8 +236,18 @@ function DatabasePage({ refreshToken }: { readonly refreshToken: number }): JSX.
     void load("");
     void getDatabaseAccessStatus().then(setAccess).catch((cause) => setError(messageFrom(cause)));
   }, [refreshToken]);
-  const selected = sources.find(({ sourceId }) => sourceId === selectedId);
+  const savedSources = sources.filter(({ kind }) => databaseRecordTab(kind) === "saved");
+  const conversationSources = sources.filter(({ kind }) => databaseRecordTab(kind) === "conversation");
+  const visibleSources = activeTab === "saved" ? savedSources : conversationSources;
+  const selected = visibleSources.find(({ sourceId }) => sourceId === selectedId);
   const linkedCredentials = credentials.filter(({ sourceIds }) => selectedId && sourceIds.includes(selectedId));
+
+  function selectTab(tab: DatabaseRecordTab): void {
+    const nextSources = tab === "saved" ? savedSources : conversationSources;
+    setActiveTab(tab);
+    setSelectedId(nextSources[0]?.sourceId);
+    setRevealed(undefined);
+  }
 
   async function reveal(): Promise<void> {
     if (!selected) return;
@@ -268,12 +281,16 @@ function DatabasePage({ refreshToken }: { readonly refreshToken: number }): JSX.
     {error && <p className="mvp-alert error" role="alert">{error}</p>}
     {access?.passwordConfigured && !access.unlocked && <form className="mvp-unlock-bar" onSubmit={(event) => { event.preventDefault(); void unlock(); }}><LockKey size={19} weight="duotone" /><div><strong>数据库已锁定</strong><span>输入设置页配置的密码后，才能临时查看原文或重置数据库。</span></div><label className="mvp-visually-hidden" htmlFor="database-unlock-password">数据库密码</label><input id="database-unlock-password" type="password" autoComplete="current-password" value={unlockPassword} onChange={(event) => setUnlockPassword(event.target.value)} placeholder="数据库密码" /><button className="mvp-primary" type="submit" disabled={!unlockPassword || isUnlocking}>{isUnlocking ? "解锁中" : "解锁"}</button></form>}
     <section className="mvp-card mvp-database-card">
+      <nav className="mvp-database-tabs" aria-label="数据库记录分类">
+        <button type="button" className={activeTab === "saved" ? "active" : ""} aria-pressed={activeTab === "saved"} onClick={() => selectTab("saved")}><FloppyDisk size={18} weight={activeTab === "saved" ? "fill" : "regular"} /><span><strong>信息保存</strong><small>主动保存的隐私信息</small></span><em>{savedSources.length}</em></button>
+        <button type="button" className={activeTab === "conversation" ? "active" : ""} aria-pressed={activeTab === "conversation"} onClick={() => selectTab("conversation")}><ChatCircleDots size={18} weight={activeTab === "conversation" ? "fill" : "regular"} /><span><strong>AI 对话</strong><small>对话及查询产生的记录</small></span><em>{conversationSources.length}</em></button>
+      </nav>
       <div className="mvp-banner"><ShieldCheck size={21} weight="duotone" /><div><strong>本地数据已保护</strong><span>{window.brainBuddy ? "Source 与凭据保存在 Electron userData 的本地 SQLite。" : "Source 与凭据保存在 desktop-dev 专用的本地 SQLite。"}</span></div></div>
       {isLoading && !sources.length
         ? <LoadingState label="正在读取本地记录" />
-        : sources.length
-          ? <div className="mvp-table-wrap"><table><thead><tr><th>Source</th><th>类型</th><th>安全视图</th><th>凭据</th><th>保存时间</th></tr></thead><tbody>{sources.map((source) => <tr key={source.sourceId} tabIndex={0} aria-selected={source.sourceId === selectedId} className={source.sourceId === selectedId ? "selected" : ""} onClick={() => { setSelectedId(source.sourceId); setRevealed(undefined); }} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSelectedId(source.sourceId); setRevealed(undefined); } }}><td><code>{source.sourceId}</code></td><td>{sourceKind(source.kind)}</td><td className="mvp-protected-cell">{source.protectedContent}</td><td>{source.credentialIds.length}</td><td>{formatTime(source.savedAt)}</td></tr>)}</tbody></table></div>
-          : <EmptyState icon={<Database size={30} />} title="没有找到本地记录" copy="回到主页保存一条隐私记录，或调整搜索条件。" />}
+        : visibleSources.length
+          ? <div className="mvp-table-wrap"><table><thead><tr><th>Source</th><th>类型</th><th>安全视图</th><th>凭据</th><th>保存时间</th></tr></thead><tbody>{visibleSources.map((source) => <tr key={source.sourceId} tabIndex={0} aria-selected={source.sourceId === selectedId} className={source.sourceId === selectedId ? "selected" : ""} onClick={() => { setSelectedId(source.sourceId); setRevealed(undefined); }} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSelectedId(source.sourceId); setRevealed(undefined); } }}><td><code>{source.sourceId}</code></td><td>{sourceKind(source.kind)}</td><td className="mvp-protected-cell">{source.protectedContent}</td><td>{source.credentialIds.length}</td><td>{formatTime(source.savedAt)}</td></tr>)}</tbody></table></div>
+          : <EmptyState icon={activeTab === "saved" ? <FloppyDisk size={30} /> : <ChatCircleDots size={30} />} title={query.trim() ? "当前分类没有匹配记录" : activeTab === "saved" ? "还没有保存的信息" : "还没有 AI 对话记录"} copy={query.trim() ? "可以调整搜索条件，或切换另一个分类查看。" : activeTab === "saved" ? "回到主页直接保存一条隐私信息，记录会显示在这里。" : "在主页与 BrainBuddy 对话后，本轮 Source 会显示在这里。"} />}
       {selected && <div className="mvp-source-detail"><div><h2>{sourceKind(selected.kind)}记录</h2><dl><dt>Source ID</dt><dd><code>{selected.sourceId}</code></dd><dt>AI 安全视图</dt><dd>{selected.protectedContent}</dd><dt>关联凭据</dt><dd>{linkedCredentials.length ? linkedCredentials.map((credential) => <code key={credential.credentialId}>[CREDENTIAL:{credential.credentialId}]</code>) : "无"}</dd></dl></div><div className="mvp-secret-panel"><div><span>用户输入原文</span>{revealed && <button type="button" aria-label="关闭原文" onClick={() => setRevealed(undefined)}><X size={18} /></button>}</div>{revealed ? <pre>{revealed.originalContent}</pre> : <><LockKey size={28} weight="duotone" /><p>原文不会发送给 AI。点击后只在当前界面临时显示。</p><button className="mvp-secondary" type="button" onClick={() => void reveal()}><Eye size={17} />手动查看原文</button></>}</div></div>}
     </section>
   </div>;
@@ -398,6 +415,10 @@ function sourceKind(kind: DemoSourceSummary["kind"]): string {
   return ({ capture: "保存", local_search: "本地查询", conversation: "AI 对话" } as const)[kind];
 }
 
+export function databaseRecordTab(kind: DemoSourceSummary["kind"]): DatabaseRecordTab {
+  return kind === "capture" ? "saved" : "conversation";
+}
+
 function formatTime(value: string): string {
   return new Date(value).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
@@ -405,7 +426,7 @@ function formatTime(value: string): string {
 function messageFrom(cause: unknown): string {
   const message = cause instanceof Error ? cause.message : "";
   if (message.includes("DATABASE_PASSWORD_INVALID")) return "数据库密码不正确。";
-  if (message.includes("DATABASE_PASSWORD_WEAK")) return "数据库密码需要 8–128 个字符。";
+  if (message.includes("DATABASE_PASSWORD_WEAK")) return "数据库密码需要 8-128 个字符。";
   if (message.includes("DATABASE_LOCKED")) return "请先解锁本地数据库。";
   if (message.includes("DATABASE_RESET_BLOCKED")) return "数据库正在被 AI Run 使用，请先等待完成或取消 Run。";
   return message || "操作失败，请稍后重试。";
