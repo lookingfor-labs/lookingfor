@@ -1,4 +1,5 @@
 import { createCipheriv, createDecipheriv, createHmac, randomBytes, randomUUID } from "node:crypto";
+import { chmodSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import type {
   CredentialDraft,
@@ -41,6 +42,7 @@ export class SqliteSourceStore {
     this.#sourceIdFactory = options.sourceIdFactory ?? (() => `SOURCE_${randomUUID()}`);
     this.#database.exec("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;");
     this.#migrate();
+    restrictDatabaseFiles(options.databasePath);
   }
 
   save(plan: ProtectionPlan, originalContent: string, kind: SourceSubmissionKind = "capture"): DemoSaveReceipt {
@@ -358,4 +360,14 @@ function escapeLike(value: string): string {
 function asSourceKind(value: unknown): SourceSubmissionKind {
   if (value === "capture" || value === "local_search" || value === "conversation") return value;
   throw new Error("Stored source kind is invalid");
+}
+
+function restrictDatabaseFiles(databasePath: string): void {
+  for (const path of [databasePath, `${databasePath}-wal`, `${databasePath}-shm`]) {
+    try {
+      chmodSync(path, 0o600);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  }
 }

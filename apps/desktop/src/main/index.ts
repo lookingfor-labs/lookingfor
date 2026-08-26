@@ -1,19 +1,14 @@
 import { join } from "node:path";
-import { randomBytes, randomUUID } from "node:crypto";
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { app, BrowserWindow, ipcMain, shell } from "electron";
 import { config as loadDotEnv } from "dotenv";
 import { createDeepSeekAiConversationEngine, type AiConversationEngine } from "@brainbuddy/ai-conversation";
 import {
   createDeepSeekAgentRuntime,
   createFileAgentRunRecorder,
-  type AgentRuntime,
-  type ProtectedRecordReader
+  type AgentRuntime
 } from "@brainbuddy/agent-runtime";
-import { FileMemoryStore, type MemoryStore } from "@brainbuddy/memory-engine/memory";
-import { SqliteSourceStore } from "@brainbuddy/memory-engine/sqlite";
-import { DatabaseAccessGate } from "@brainbuddy/memory-engine/access";
-import { buildProtectionPlan, PrivacyEngine, toProtectionPreview } from "@brainbuddy/privacy-engine";
+import { LocalBackend } from "../backend/local-backend";
 import {
   ANALYZE_INPUT_CHANNEL,
   AGENT_RUN_EVENT_CHANNEL,
@@ -58,21 +53,7 @@ import {
 
 loadDotEnv({ quiet: true });
 
-const privacyEngine = new PrivacyEngine({
-  knownEntities: [
-    {
-      id: "demo-person-zhang-wei",
-      canonicalName: "张伟",
-      entityType: "person",
-      token: "[PERSON_A]",
-      aliases: [],
-      defaultPolicy: "keep_original"
-    }
-  ]
-});
-let sourceStore: SqliteSourceStore | undefined;
-let databaseAccess: DatabaseAccessGate | undefined;
-let memoryStore: MemoryStore | undefined;
+let localBackend: LocalBackend | undefined;
 let aiConversationEngine: AiConversationEngine | undefined;
 let agentRuntime: AgentRuntime | undefined;
 const aiDrafts = new Map<string, ReturnType<AiConversationEngine["prepare"]>>();
@@ -88,67 +69,15 @@ function getAiConversationEngine(): AiConversationEngine {
 }
 
 function getAgentRuntime(): AgentRuntime {
-  if (!sourceStore || !memoryStore) throw new Error("Local stores are not ready");
-  const records: ProtectedRecordReader = {
-    search(query, limit) {
-      const result = sourceStore!.searchOffline(query);
-      const sources = result.sources.slice(0, limit);
-      const credentials = result.credentials.slice(0, limit);
-      return {
-        sources,
-        credentials,
-        total: result.sources.length + result.credentials.length,
-        truncated: sources.length < result.sources.length || credentials.length < result.credentials.length
-      };
-    },
-    sourceExists: (sourceId) => sourceStore!.hasSource(sourceId),
-    credentialExists: (credentialId) => sourceStore!.hasCredential(credentialId)
-  };
+  if (!localBackend) throw new Error("Local stores are not ready");
   agentRuntime ??= createDeepSeekAgentRuntime({
     apiKey: process.env.SECRET_DEEPSEEK_API_KEY ?? "",
     ...(process.env.SECRET_DEEPSEEK_MODEL ? { modelId: process.env.SECRET_DEEPSEEK_MODEL } : {}),
-    records,
-    memories: memoryStore,
+    records: localBackend.records,
+    memories: localBackend.memories,
     recorder: createFileAgentRunRecorder({ directory: join(app.getPath("userData"), "agent-runs") })
   });
   return agentRuntime;
-}
-
-function createProtectionPlan(request: unknown) {
-  const { text, decisions } = ProtectionRequestSchema.parse(request);
-  const analysis = privacyEngine.analyze(text);
-  return buildProtectionPlan({
-    text,
-    entities: analysis.entities,
-    decisions,
-    credentialIdFactory: randomUUID
-  });
-}
-
-function createSuggestedProtectionPlan(text: string) {
-  const analysis = privacyEngine.analyze(text);
-  return buildProtectionPlan({
-    text,
-    entities: analysis.entities,
-    decisions: analysis.entities.map(({ start, end, suggestedPolicy: policy }) => ({ start, end, policy })),
-    credentialIdFactory: randomUUID
-  });
-}
-
-function loadEncryptionKey(dataDirectory: string): Buffer {
-  mkdirSync(dataDirectory, { recursive: true });
-  const keyPath = join(dataDirectory, "brainbuddy.key");
-  try {
-    const key = readFileSync(keyPath);
-    if (key.byteLength !== 32) throw new Error("Stored BrainBuddy key is invalid");
-    chmodSync(keyPath, 0o600);
-    return key;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    const key = randomBytes(32);
-    writeFileSync(keyPath, key, { flag: "wx", mode: 0o600 });
-    return key;
-  }
 }
 
 function createWindow(): void {
@@ -183,35 +112,31 @@ function createWindow(): void {
 
 app.whenReady().then(() => {
   const dataDirectory = app.getPath("userData");
-  sourceStore = new SqliteSourceStore({
-    databasePath: join(dataDirectory, "brainbuddy.sqlite"),
-    encryptionKey: loadEncryptionKey(dataDirectory)
-  });
-  databaseAccess = new DatabaseAccessGate({ metadataPath: join(dataDirectory, "database-access.json") });
-  memoryStore = new FileMemoryStore({ rootDirectory: join(dataDirectory, "memories") });
+  localBackend = new LocalBackend({ dataDirectory });
   ipcMain.handle(ANALYZE_INPUT_CHANNEL, (_event, request: unknown) => {
     const { text } = AnalyzeInputRequestSchema.parse(request);
-    return privacyEngine.analyze(text);
+    return localBackend!.analyze(text);
   });
-  ipcMain.handle(PREVIEW_PROTECTION_CHANNEL, (_event, request: unknown) =>
-    toProtectionPreview(createProtectionPlan(request))
-  );
-  ipcMain.handle(SAVE_DEMO_CANDIDATE_CHANNEL, (_event, request: unknown) =>
-    sourceStore!.save(createProtectionPlan(request), ProtectionRequestSchema.parse(request).text, "capture")
-  );
+  ipcMain.handle(PREVIEW_PROTECTION_CHANNEL, (_event, request: unknown) => {
+    const { text, decisions } = ProtectionRequestSchema.parse(request);
+    return localBackend!.preview(text, decisions);
+  });
+  ipcMain.handle(SAVE_DEMO_CANDIDATE_CHANNEL, (_event, request: unknown) => {
+    const { text, decisions } = ProtectionRequestSchema.parse(request);
+    return localBackend!.save(text, decisions, "capture");
+  });
   ipcMain.handle(SEARCH_DEMO_SOURCES_CHANNEL, (_event, request: unknown) => {
     const { query } = SearchDemoSourcesRequestSchema.parse(request);
-    return sourceStore!.searchOffline(query);
+    return localBackend!.search(query);
   });
   ipcMain.handle(REVEAL_DEMO_SOURCE_CHANNEL, (_event, request: unknown) => {
     const { sourceId } = RevealDemoSourceRequestSchema.parse(request);
-    databaseAccess!.assertUnlocked();
-    return sourceStore!.revealSource(sourceId);
+    return localBackend!.reveal(sourceId);
   });
   ipcMain.handle(PREPARE_AI_CONVERSATION_CHANNEL, (_event, request: unknown) => {
     const { text } = PrepareAiConversationRequestSchema.parse(request);
-    const receipt = sourceStore!.save(createSuggestedProtectionPlan(text), text, "conversation");
-    const candidates = sourceStore!.searchOffline("", receipt.sourceId);
+    const receipt = localBackend!.saveSuggested(text, "conversation");
+    const candidates = localBackend!.search("", receipt.sourceId);
     const draft = getAiConversationEngine().prepare({
       message: receipt.preview.protectedContent,
       conversationSource: {
@@ -223,7 +148,7 @@ app.whenReady().then(() => {
       },
       sources: candidates.sources,
       credentials: candidates.credentials,
-      memories: memoryStore!.list()
+      memories: localBackend!.memories.list()
     });
     aiDrafts.set(draft.draftId, draft);
     return draft;
@@ -268,11 +193,11 @@ app.whenReady().then(() => {
   });
   ipcMain.handle(APPLY_MEMORY_OPERATION_CHANNEL, (_event, request: unknown) => {
     const { operation } = ApplyMemoryOperationRequestSchema.parse(request);
-    return memoryStore!.apply(operation);
+    return localBackend!.memories.apply(operation);
   });
   ipcMain.handle(PREPARE_AGENT_RUN_CHANNEL, (_event, request: unknown) => {
     const { text, writePolicy } = PrepareAgentRunRequestSchema.parse(request);
-    const receipt = sourceStore!.save(createSuggestedProtectionPlan(text), text, "conversation");
+    const receipt = localBackend!.saveSuggested(text, "conversation");
     return getAgentRuntime().prepare({
       message: receipt.preview.protectedContent,
       conversationSourceId: receipt.sourceId,
@@ -300,31 +225,30 @@ app.whenReady().then(() => {
   });
   ipcMain.handle(REVERT_MEMORY_REVISION_CHANNEL, (_event, request: unknown) => {
     const { revisionId } = RevertMemoryRevisionRequestSchema.parse(request);
-    return memoryStore!.revert(revisionId);
+    return localBackend!.memories.revert(revisionId);
   });
   ipcMain.handle(RESET_MEMORY_CONTEXT_CHANNEL, () => {
     if (aiRuns.size || agentRuns.size) throw new Error("MEMORY_RESET_BLOCKED: A Run is still active");
     aiDrafts.clear();
-    return memoryStore!.reset();
+    return localBackend!.memories.reset();
   });
-  ipcMain.handle(LIST_MEMORY_FILES_CHANNEL, () => memoryStore!.list());
-  ipcMain.handle(GET_DATABASE_ACCESS_STATUS_CHANNEL, () => databaseAccess!.status());
+  ipcMain.handle(LIST_MEMORY_FILES_CHANNEL, () => localBackend!.memories.list());
+  ipcMain.handle(GET_DATABASE_ACCESS_STATUS_CHANNEL, () => localBackend!.access.status());
   ipcMain.handle(CONFIGURE_DATABASE_PASSWORD_CHANNEL, (_event, request: unknown) => {
     const { currentPassword, newPassword } = ConfigureDatabasePasswordRequestSchema.parse(request);
-    return databaseAccess!.configure(currentPassword, newPassword);
+    return localBackend!.access.configure(currentPassword, newPassword);
   });
   ipcMain.handle(UNLOCK_DATABASE_CHANNEL, (_event, request: unknown) => {
     const { password } = UnlockDatabaseRequestSchema.parse(request);
-    return databaseAccess!.unlock(password);
+    return localBackend!.access.unlock(password);
   });
-  ipcMain.handle(LOCK_DATABASE_CHANNEL, () => databaseAccess!.lock());
+  ipcMain.handle(LOCK_DATABASE_CHANNEL, () => localBackend!.access.lock());
   ipcMain.handle(RESET_DATABASE_CHANNEL, (_event, request: unknown) => {
     ResetDatabaseRequestSchema.parse(request);
     if (aiRuns.size || agentRuns.size) throw new Error("DATABASE_RESET_BLOCKED: A Run is still active");
-    databaseAccess!.assertUnlocked();
     aiDrafts.clear();
     agentRuntime = undefined;
-    return sourceStore!.reset();
+    return localBackend!.resetDatabase();
   });
   createWindow();
 
@@ -344,8 +268,6 @@ app.on("before-quit", () => {
   for (const runId of agentRuns) void agentRuntime?.cancel(runId);
   agentRuns.clear();
   agentRuntime = undefined;
-  sourceStore?.close();
-  sourceStore = undefined;
-  databaseAccess = undefined;
-  memoryStore = undefined;
+  localBackend?.close();
+  localBackend = undefined;
 });

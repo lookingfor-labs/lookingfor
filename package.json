@@ -10,6 +10,8 @@
   "scripts": {
     "dev": "npm run dev --workspace @brainbuddy/desktop",
     "build": "npm run build --workspace @brainbuddy/desktop",
+    "pack": "npm run pack --workspace @brainbuddy/desktop",
+    "dist": "npm run dist --workspace @brainbuddy/desktop",
     "test": "vitest run",
     "typecheck": "npm run typecheck --workspaces --if-present"
   },

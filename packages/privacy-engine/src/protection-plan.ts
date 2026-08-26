@@ -6,7 +6,7 @@ import type {
   ProtectionPreview,
   SafetyCheck
 } from "@brainbuddy/domain";
-import { isCredentialId } from "./credential-id";
+import { isCredentialId } from "./credential-id.ts";
 
 export interface BuildProtectionPlanInput {
   readonly text: string;

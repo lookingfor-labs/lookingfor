@@ -2,13 +2,37 @@
   "name": "@brainbuddy/desktop",
   "version": "0.1.0",
   "private": true,
+  "description": "Local-first private memory assistant",
+  "author": "BrainBuddy",
+  "desktopName": "BrainBuddy",
   "type": "module",
   "main": "out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
     "dev:browser": "vite --config vite.browser.config.ts",
     "build": "electron-vite build",
+    "pack": "npm run build && electron-builder --dir",
+    "dist": "npm run build && electron-builder --publish never",
     "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "build": {
+    "appId": "com.brainbuddy.desktop",
+    "productName": "BrainBuddy",
+    "executableName": "brainbuddy",
+    "asar": true,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "out/**/*"
+    ],
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Utility",
+      "syncDesktopName": true
+    }
   },
   "dependencies": {
     "@brainbuddy/agent-runtime": "*",
@@ -27,7 +51,8 @@
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^5.2.0",
-    "electron": "^39.8.10",
+    "electron": "39.8.10",
+    "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0"
   }
 }

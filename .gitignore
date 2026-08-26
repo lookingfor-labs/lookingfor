@@ -1,6 +1,7 @@
 node_modules/
 dist/
 out/
+apps/desktop/release/
 coverage/
 *.log
 .DS_Store
@@ -8,3 +9,4 @@ coverage/
 .env.*
 !.env.example
 .it-runner/logs/
+.it-runner/data/

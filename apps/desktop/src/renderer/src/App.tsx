@@ -87,7 +87,6 @@ const secretTypes: ReadonlySet<EntityType> = new Set([
 ]);
 
 export function App({ onOpenMvp }: { readonly onOpenMvp?: () => void } = {}): JSX.Element {
-  const usesPersistentDatabase = Boolean(window.brainBuddy);
   const [activePage, setActivePage] = useState<DemoPage>("protect");
   const [text, setText] = useState<string>(scenarios[0].text);
   const [analysis, setAnalysis] = useState<PrivacyAnalysis>();
@@ -218,7 +217,7 @@ export function App({ onOpenMvp }: { readonly onOpenMvp?: () => void } = {}): JS
             <em>{item.status === "ready" ? "可验收" : item.status === "next" ? "本地数据库" : "界面预览"}</em>
           </button>)}
         </nav>
-        <div className="sidebar-foot"><span><i /> 本地运行</span><span>{activePage === "ai" || activePage === "agent" ? "DeepSeek 已接入" : "AI 请求仅在 04 / 05 发起"}</span><small>{usesPersistentDatabase ? "Source 与凭据已保存到本地 SQLite" : "浏览器验收模式使用会话内存"}</small>{onOpenMvp && <button type="button" onClick={onOpenMvp}>返回 MVP</button>}</div>
+        <div className="sidebar-foot"><span><i /> 本地运行</span><span>{activePage === "ai" || activePage === "agent" ? "DeepSeek 已接入" : "AI 请求仅在 04 / 05 发起"}</span><small>Source 与凭据已保存到本地 SQLite</small>{onOpenMvp && <button type="button" onClick={onOpenMvp}>返回 MVP</button>}</div>
       </aside>
 
       <main className="shell">
@@ -230,7 +229,7 @@ export function App({ onOpenMvp }: { readonly onOpenMvp?: () => void } = {}): JS
       {activePage === "protect" && <>
       <section className="hero compact-hero">
         <div><p className="section-number">第一阶段 · 下一步</p><h2>看清三份内容，<br />再决定是否保存。</h2></div>
-        <p className="hero-copy">这一步把检测建议变成可调整的保护方案。{usesPersistentDatabase ? "确认后加密保存到本地 SQLite，离线仍可查询。" : "浏览器验收模式仅保存到会话内存。"}不会调用外部 AI。</p>
+        <p className="hero-copy">这一步把检测建议变成可调整的保护方案。确认后加密保存到本地 SQLite，离线仍可查询。不会调用外部 AI。</p>
       </section>
 
       <nav className="scenario-bar" aria-label="验收场景">
@@ -295,15 +294,15 @@ export function App({ onOpenMvp }: { readonly onOpenMvp?: () => void } = {}): JS
           </div>
         </div>
         <div className="save-action">
-          <button type="button" disabled={!preview?.readyToSave || isSaving || isAnalyzing || Boolean(receipt)} onClick={() => void saveCandidate()}>{receipt ? "本次版本已保存" : isSaving ? "正在保存…" : usesPersistentDatabase ? "保存到本地数据库" : "保存到浏览器会话"}</button>
-          <small>{usesPersistentDatabase ? "本地加密 SQLite · 离线可查询" : "浏览器会话内存 · 刷新后清空"}</small>
+          <button type="button" disabled={!preview?.readyToSave || isSaving || isAnalyzing || Boolean(receipt)} onClick={() => void saveCandidate()}>{receipt ? "本次版本已保存" : isSaving ? "正在保存…" : "保存到本地数据库"}</button>
+          <small>本地加密 SQLite · 离线可查询</small>
         </div>
       </section>
 
       {receipt && <section className="receipt" role="status"><div><span>已保存原始记录</span><strong>{receipt.sourceId}</strong></div><p>凭据记录：{receipt.credentialIds.length ? receipt.credentialIds.join("、") : "无"}</p><button type="button" onClick={() => navigate("save")}>查看保存与来源</button></section>}
       </>}
 
-      {activePage === "save" && <SavePage sources={sources} receipt={receipt} isPersistent={usesPersistentDatabase} isLoading={isLoadingRecords} revealedSource={revealedSource} onReveal={revealSource} onCloseReveal={() => setRevealedSource(undefined)} onGoProtect={() => navigate("protect")} />}
+      {activePage === "save" && <SavePage sources={sources} receipt={receipt} isLoading={isLoadingRecords} revealedSource={revealedSource} onReveal={revealSource} onCloseReveal={() => setRevealedSource(undefined)} onGoProtect={() => navigate("protect")} />}
       {activePage === "search" && <SearchPage query={searchQuery} sources={sources} credentials={credentials} isLoading={isLoadingRecords} revealedSource={revealedSource} onQueryChange={setSearchQuery} onSearch={() => void submitQuery()} onReveal={revealSource} onCloseReveal={() => setRevealedSource(undefined)} />}
       {activePage === "ai" && <AiConversationPage />}
       {activePage === "agent" && <AgentPreviewPage />}
@@ -313,10 +312,9 @@ export function App({ onOpenMvp }: { readonly onOpenMvp?: () => void } = {}): JS
   );
 }
 
-function SavePage({ sources, receipt, isPersistent, isLoading, revealedSource, onReveal, onCloseReveal, onGoProtect }: {
+function SavePage({ sources, receipt, isLoading, revealedSource, onReveal, onCloseReveal, onGoProtect }: {
   readonly sources: readonly DemoSourceSummary[];
   readonly receipt: DemoSaveReceipt | undefined;
-  readonly isPersistent: boolean;
   readonly isLoading: boolean;
   readonly revealedSource: DemoSourceReveal | undefined;
   readonly onReveal: (sourceId: string) => Promise<void>;
@@ -325,7 +323,7 @@ function SavePage({ sources, receipt, isPersistent, isLoading, revealedSource, o
 }): JSX.Element {
   return <>
     <PageIntro number="02" kicker="LOCAL DATABASE" title="保存与来源" copy="验证 Source、凭据与原始输入之间的引用关系。Memory 不在保存输入时自动生成，而由 AI 独立维护为本地文件。" />
-    <div className="prototype-notice"><strong>{isPersistent ? "SQLite 已启用" : "浏览器验收模式"}</strong><span>{isPersistent ? "原文和凭据明文加密落盘；索引只包含受保护内容、掩码与引用。" : "当前浏览器预览使用会话内存，桌面运行时会写入 SQLite。"}</span></div>
+    <div className="prototype-notice"><strong>SQLite 已启用</strong><span>原文和凭据明文加密落盘；索引只包含受保护内容、掩码与引用。</span></div>
     {sources.length === 0 && !isLoading ? <EmptyPage title="还没有保存记录" copy="先到“输入与保护”完成一次保存，系统会生成 Source ID 和关联的凭据引用。" action="去输入与保护" onAction={onGoProtect} /> : <section className="record-stack">
       <div className="results-heading"><div><p className="section-number">离线记录</p><h3>已保存 Source</h3></div><span>{isLoading ? "正在读取" : `${sources.length} 条`}</span></div>
       {sources.map((source) => <SourceRecord key={source.sourceId} source={source} onReveal={onReveal} highlighted={receipt?.sourceId === source.sourceId} />)}
@@ -808,73 +806,32 @@ function credentialIdsFrom(preview: ProtectionPreview): Record<string, string> {
 
 async function analyzeInput(text: string): Promise<PrivacyAnalysis> {
   if (window.brainBuddy) return window.brainBuddy.analyzeInput({ text });
-  return (await browserRuntime()).engine.analyze(text);
+  return postJson<PrivacyAnalysis>("/api/privacy/analyze", { text });
 }
 
 async function previewProtection(request: ProtectionRequest): Promise<ProtectionPreview> {
   if (window.brainBuddy) return window.brainBuddy.previewProtection(request);
-  const runtime = await browserRuntime();
-  const analysis = runtime.engine.analyze(request.text);
-  return runtime.toProtectionPreview(runtime.buildProtectionPlan({
-    text: request.text,
-    entities: analysis.entities,
-    decisions: request.decisions,
-    credentialIdFactory: () => runtime.createCredentialId(crypto)
-  }));
+  return postJson<ProtectionPreview>("/api/privacy/preview", request);
 }
 
 async function saveDemoCandidate(request: ProtectionRequest): Promise<DemoSaveReceipt> {
   if (window.brainBuddy) return window.brainBuddy.saveDemoCandidate(request);
-  const runtime = await browserRuntime();
-  const analysis = runtime.engine.analyze(request.text);
-  const plan = runtime.buildProtectionPlan({
-    text: request.text,
-    entities: analysis.entities,
-    decisions: request.decisions,
-    credentialIdFactory: () => runtime.createCredentialId(crypto)
-  });
-  return runtime.session.save(plan, request.text);
+  return postJson<DemoSaveReceipt>("/api/database/save", request);
 }
 
 async function searchDemoSources(query: string): Promise<DemoOfflineSearchResult> {
   if (window.brainBuddy) return window.brainBuddy.searchDemoSources({ query });
-  return (await browserRuntime()).session.searchOffline(query);
+  return postJson<DemoOfflineSearchResult>("/api/database/search", { query });
 }
 
 async function revealDemoSource(sourceId: string): Promise<DemoSourceReveal> {
   if (window.brainBuddy) return window.brainBuddy.revealDemoSource({ sourceId });
-  await postJson("/api/database/assert-access", {});
-  return (await browserRuntime()).session.revealSource(sourceId);
+  return postJson<DemoSourceReveal>("/api/database/reveal", { sourceId });
 }
 
 async function prepareAiConversation(text: string): Promise<AiConversationDraft> {
   if (window.brainBuddy) return window.brainBuddy.prepareAiConversation({ text });
-  const submitted = await saveBrowserConversationTurn(text);
-  const allCandidates = await searchDemoSources("");
-  return postJson<AiConversationDraft>("/api/ai-conversation/prepare", {
-    message: submitted.preview.protectedContent,
-    conversationSource: {
-      sourceId: submitted.sourceId,
-      kind: submitted.kind,
-      protectedContent: submitted.preview.protectedContent,
-      credentialIds: submitted.credentialIds,
-      savedAt: submitted.savedAt
-    },
-    sources: allCandidates.sources.filter(({ sourceId }) => sourceId !== submitted.sourceId),
-    credentials: allCandidates.credentials
-  });
-}
-
-async function saveBrowserConversationTurn(text: string): Promise<DemoSaveReceipt> {
-  const runtime = await browserRuntime();
-  const analysis = runtime.engine.analyze(text);
-  const plan = runtime.buildProtectionPlan({
-    text,
-    entities: analysis.entities,
-    decisions: analysis.entities.map(({ start, end, suggestedPolicy: policy }) => ({ start, end, policy })),
-    credentialIdFactory: () => runtime.createCredentialId(crypto)
-  });
-  return runtime.session.save(plan, text, "conversation");
+  return postJson<AiConversationDraft>("/api/ai-conversation/prepare", { text });
 }
 
 async function streamAiConversation(
@@ -947,15 +904,7 @@ async function streamAiConversation(
 
 async function prepareAgentRun(text: string, writePolicy: MemoryWritePolicy): Promise<AgentRunDraft> {
   if (window.brainBuddy) return window.brainBuddy.prepareAgentRun({ text, writePolicy });
-  const submitted = await saveBrowserConversationTurn(text);
-  const allCandidates = await searchDemoSources("");
-  return postJson<AgentRunDraft>("/api/agent/prepare", {
-    message: submitted.preview.protectedContent,
-    conversationSourceId: submitted.sourceId,
-    writePolicy,
-    sources: allCandidates.sources,
-    credentials: allCandidates.credentials
-  });
+  return postJson<AgentRunDraft>("/api/agent/prepare", { text, writePolicy });
 }
 
 async function streamAgentRun(
@@ -1068,8 +1017,7 @@ export async function lockDatabase(): Promise<DatabaseAccessStatus> {
 
 export async function resetDatabase(): Promise<DatabaseResetResult> {
   if (window.brainBuddy) return window.brainBuddy.resetDatabase({ confirmation: "清除数据库" });
-  await postJson("/api/database/reset", { confirmation: "清除数据库" });
-  return (await browserRuntime()).session.reset();
+  return postJson<DatabaseResetResult>("/api/database/reset", { confirmation: "清除数据库" });
 }
 
 export {
@@ -1166,23 +1114,6 @@ function agentEventLabel(type: AgentRuntimeEvent["type"]): string {
     agent_failed: "Run 失败",
     agent_cancelled: "Run 已取消"
   } as const)[type];
-}
-
-let runtimePromise: ReturnType<typeof createBrowserRuntime> | undefined;
-
-function browserRuntime() {
-  if (!import.meta.env.DEV) throw new Error("The preload privacy API is unavailable");
-  runtimePromise ??= createBrowserRuntime();
-  return runtimePromise;
-}
-
-async function createBrowserRuntime() {
-  const [{ DemoSourceSession }, { buildProtectionPlan, createCredentialId, PrivacyEngine, toProtectionPreview }] = await Promise.all([
-    import("@brainbuddy/memory-engine"),
-    import("@brainbuddy/privacy-engine")
-  ]);
-  const engine = new PrivacyEngine({ knownEntities: [{ id: "demo-person-zhang-wei", canonicalName: "张伟", entityType: "person", token: "[PERSON_A]", aliases: [], defaultPolicy: "keep_original" }] });
-  return { engine, session: new DemoSourceSession(), buildProtectionPlan, createCredentialId, toProtectionPreview };
 }
 
 function maskSensitiveText(entity: DetectedEntity): string {

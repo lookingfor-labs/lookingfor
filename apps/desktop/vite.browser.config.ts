@@ -22,6 +22,7 @@ export default defineConfig({
   plugins: [
     aiConversationMiddleware({
       apiKey: process.env.SECRET_DEEPSEEK_API_KEY ?? "",
+      dataDirectory: fileURLToPath(new URL("../../.it-runner/data/desktop-dev", import.meta.url)),
       ...(process.env.SECRET_DEEPSEEK_MODEL ? { modelId: process.env.SECRET_DEEPSEEK_MODEL } : {}),
       agentRunLogDirectory: fileURLToPath(new URL("../../.it-runner/logs/desktop-dev/agent-runs", import.meta.url))
     }),

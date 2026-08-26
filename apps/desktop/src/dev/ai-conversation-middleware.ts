@@ -6,106 +6,42 @@ import { createDeepSeekAiConversationEngine, type AiConversationEngine } from "@
 import {
   createDeepSeekAgentRuntime,
   createFileAgentRunRecorder,
-  type AgentRuntime,
-  type ProtectedRecordReader
+  type AgentRuntime
 } from "@brainbuddy/agent-runtime";
-import { DemoMemorySession } from "@brainbuddy/memory-engine/memory";
-import { DatabaseAccessGate } from "@brainbuddy/memory-engine/access";
-import type {
-  AiConversationDraft,
-  AiConversationInput,
-  DemoCredentialSummary,
-  DemoSourceSummary
-} from "@brainbuddy/domain";
-
-const prepareSchema = z.object({
-  message: z.string().min(1).max(20_000),
-  conversationSource: z.object({
-    sourceId: z.string().max(200),
-    kind: z.enum(["capture", "local_search", "conversation"]),
-    protectedContent: z.string().max(20_000),
-    credentialIds: z.array(z.string().max(200)).max(100),
-    savedAt: z.string().max(100)
-  }),
-  sources: z.array(z.object({
-    sourceId: z.string().max(200),
-    kind: z.enum(["capture", "local_search", "conversation"]),
-    protectedContent: z.string().max(20_000),
-    credentialIds: z.array(z.string().max(200)).max(100),
-    savedAt: z.string().max(100)
-  })).max(100),
-  credentials: z.array(z.object({
-    credentialId: z.string().max(200),
-    entityType: z.string().max(100),
-    maskedValue: z.string().max(2_000),
-    sourceIds: z.array(z.string().max(200)).max(100),
-    savedAt: z.string().max(100)
-  })).max(100)
-});
+import type { AiConversationDraft } from "@brainbuddy/domain";
+import {
+  AnalyzeInputRequestSchema,
+  PrepareAgentRunRequestSchema,
+  PrepareAiConversationRequestSchema,
+  ProtectionRequestSchema,
+  RevealDemoSourceRequestSchema,
+  SearchDemoSourcesRequestSchema
+} from "@brainbuddy/shared-contracts";
+import { LocalBackend } from "../backend/local-backend";
 
 const memoryOperationSchema = z.discriminatedUnion("operation", [
   z.object({ operation: z.literal("create"), path: z.string(), content: z.string(), reason: z.string() }),
   z.object({ operation: z.literal("update"), path: z.string(), expectedVersion: z.string(), content: z.string(), reason: z.string() })
 ]);
 
-const agentPrepareSchema = z.object({
-  message: z.string().min(1).max(20_000),
-  conversationSourceId: z.string().max(200),
-  writePolicy: z.enum(["require_approval", "auto_apply"]),
-  sources: prepareSchema.shape.sources,
-  credentials: prepareSchema.shape.credentials
-});
-
-class BrowserProtectedRecords implements ProtectedRecordReader {
-  readonly #sources = new Map<string, DemoSourceSummary>();
-  readonly #credentials = new Map<string, DemoCredentialSummary>();
-
-  add(sources: readonly DemoSourceSummary[], credentials: readonly DemoCredentialSummary[]): void {
-    sources.forEach((source) => this.#sources.set(source.sourceId, source));
-    credentials.forEach((credential) => this.#credentials.set(credential.credentialId, credential));
-  }
-
-  search(query: string, limit: number) {
-    const normalized = query.toLocaleLowerCase();
-    const sources = [...this.#sources.values()].filter((source) =>
-      `${source.sourceId} ${source.kind} ${source.protectedContent}`.toLocaleLowerCase().includes(normalized)
-    );
-    const credentials = [...this.#credentials.values()].filter((credential) =>
-      `${credential.credentialId} ${credential.entityType} ${credential.maskedValue} ${credential.sourceIds.join(" ")}`
-        .toLocaleLowerCase().includes(normalized)
-    );
-    return {
-      sources: sources.slice(0, limit),
-      credentials: credentials.slice(0, limit),
-      total: sources.length + credentials.length,
-      truncated: sources.length > limit || credentials.length > limit
-    };
-  }
-
-  sourceExists(sourceId: string): boolean { return this.#sources.has(sourceId); }
-  credentialExists(credentialId: string): boolean { return this.#credentials.has(credentialId); }
-  reset(): void { this.#sources.clear(); this.#credentials.clear(); }
-}
-
 export function aiConversationMiddleware(options: {
   readonly apiKey: string;
+  readonly dataDirectory: string;
   readonly modelId?: string;
   readonly agentRunLogDirectory?: string;
 }): Plugin {
   let engine: AiConversationEngine | undefined;
   let agentRuntime: AgentRuntime | undefined;
   const drafts = new Map<string, AiConversationDraft>();
-  const memories = new DemoMemorySession();
-  const records = new BrowserProtectedRecords();
-  const databaseAccess = new DatabaseAccessGate();
+  const backend = new LocalBackend({ dataDirectory: options.dataDirectory });
   const activeAiRuns = new Set<string>();
   const activeAgentRuns = new Set<string>();
   const getEngine = () => engine ??= createDeepSeekAiConversationEngine(options);
   const getAgentRuntime = () => agentRuntime ??= createDeepSeekAgentRuntime({
     apiKey: options.apiKey,
     ...(options.modelId ? { modelId: options.modelId } : {}),
-    records,
-    memories,
+    records: backend.records,
+    memories: backend.memories,
     ...(options.agentRunLogDirectory
       ? { recorder: createFileAgentRunRecorder({ directory: options.agentRunLogDirectory }) }
       : {})
@@ -114,12 +50,47 @@ export function aiConversationMiddleware(options: {
   return {
     name: "brainbuddy-ai-conversation-dev-server",
     configureServer(server) {
+      server.httpServer?.once("close", () => backend.close());
       server.middlewares.use(async (request, response, next) => {
-        if (request.method !== "POST" || (!request.url?.startsWith("/api/ai-conversation/") && !request.url?.startsWith("/api/agent/") && !request.url?.startsWith("/api/memory/") && !request.url?.startsWith("/api/database/"))) return next();
+        if (request.method !== "POST" || (!request.url?.startsWith("/api/privacy/") && !request.url?.startsWith("/api/ai-conversation/") && !request.url?.startsWith("/api/agent/") && !request.url?.startsWith("/api/memory/") && !request.url?.startsWith("/api/database/"))) return next();
         try {
+          if (request.url === "/api/privacy/analyze") {
+            const { text } = AnalyzeInputRequestSchema.parse(await readJson(request));
+            return sendJson(response, 200, backend.analyze(text));
+          }
+          if (request.url === "/api/privacy/preview") {
+            const { text, decisions } = ProtectionRequestSchema.parse(await readJson(request));
+            return sendJson(response, 200, backend.preview(text, decisions));
+          }
+          if (request.url === "/api/database/save") {
+            const { text, decisions } = ProtectionRequestSchema.parse(await readJson(request));
+            return sendJson(response, 200, backend.save(text, decisions, "capture"));
+          }
+          if (request.url === "/api/database/search") {
+            const { query } = SearchDemoSourcesRequestSchema.parse(await readJson(request));
+            return sendJson(response, 200, backend.search(query));
+          }
+          if (request.url === "/api/database/reveal") {
+            const { sourceId } = RevealDemoSourceRequestSchema.parse(await readJson(request));
+            return sendJson(response, 200, backend.reveal(sourceId));
+          }
           if (request.url === "/api/ai-conversation/prepare") {
-            const input = prepareSchema.parse(await readJson(request)) as Omit<AiConversationInput, "memories">;
-            const draft = getEngine().prepare({ ...input, memories: memories.list() });
+            const { text } = PrepareAiConversationRequestSchema.parse(await readJson(request));
+            const receipt = backend.saveSuggested(text, "conversation");
+            const candidates = backend.search("", receipt.sourceId);
+            const draft = getEngine().prepare({
+              message: receipt.preview.protectedContent,
+              conversationSource: {
+                sourceId: receipt.sourceId,
+                kind: receipt.kind,
+                protectedContent: receipt.preview.protectedContent,
+                credentialIds: receipt.credentialIds,
+                savedAt: receipt.savedAt
+              },
+              sources: candidates.sources,
+              credentials: candidates.credentials,
+              memories: backend.memories.list()
+            });
             drafts.set(draft.draftId, draft);
             return sendJson(response, 200, draft);
           }
@@ -149,14 +120,14 @@ export function aiConversationMiddleware(options: {
           }
           if (request.url === "/api/ai-conversation/apply-memory") {
             const { operation } = z.object({ operation: memoryOperationSchema }).parse(await readJson(request));
-            return sendJson(response, 200, memories.apply(operation));
+            return sendJson(response, 200, backend.memories.apply(operation));
           }
           if (request.url === "/api/agent/prepare") {
-            const input = agentPrepareSchema.parse(await readJson(request));
-            records.add(input.sources as DemoSourceSummary[], input.credentials as DemoCredentialSummary[]);
+            const input = PrepareAgentRunRequestSchema.parse(await readJson(request));
+            const receipt = backend.saveSuggested(input.text, "conversation");
             return sendJson(response, 200, getAgentRuntime().prepare({
-              message: input.message,
-              conversationSourceId: input.conversationSourceId,
+              message: receipt.preview.protectedContent,
+              conversationSourceId: receipt.sourceId,
               writePolicy: input.writePolicy
             }));
           }
@@ -192,33 +163,33 @@ export function aiConversationMiddleware(options: {
           }
           if (request.url === "/api/agent/revert") {
             const { revisionId } = z.object({ revisionId: z.string().uuid() }).parse(await readJson(request));
-            return sendJson(response, 200, memories.revert(revisionId));
+            return sendJson(response, 200, backend.memories.revert(revisionId));
           }
           if (request.url === "/api/agent/reset-memory") {
             if (activeAgentRuns.size) return sendJson(response, 409, { error: "Memory 正在被 Agent Run 使用，请先等待完成或取消 Run。" });
             drafts.clear();
-            return sendJson(response, 200, memories.reset());
+            return sendJson(response, 200, backend.memories.reset());
           }
-          if (request.url === "/api/memory/list") return sendJson(response, 200, memories.list());
+          if (request.url === "/api/memory/list") return sendJson(response, 200, backend.memories.list());
           if (request.url === "/api/database/access-status") {
-            return sendJson(response, 200, databaseAccess.status());
+            return sendJson(response, 200, backend.access.status());
           }
           if (request.url === "/api/database/configure-password") {
             const input = z.object({
               currentPassword: z.string().max(128).optional(),
               newPassword: z.string().min(8).max(128)
             }).parse(await readJson(request));
-            return sendJson(response, 200, databaseAccess.configure(input.currentPassword, input.newPassword));
+            return sendJson(response, 200, backend.access.configure(input.currentPassword, input.newPassword));
           }
           if (request.url === "/api/database/unlock") {
             const { password } = z.object({ password: z.string().min(1).max(128) }).parse(await readJson(request));
-            return sendJson(response, 200, databaseAccess.unlock(password));
+            return sendJson(response, 200, backend.access.unlock(password));
           }
           if (request.url === "/api/database/lock") {
-            return sendJson(response, 200, databaseAccess.lock());
+            return sendJson(response, 200, backend.access.lock());
           }
           if (request.url === "/api/database/assert-access") {
-            databaseAccess.assertUnlocked();
+            backend.access.assertUnlocked();
             return sendJson(response, 200, { unlocked: true });
           }
           if (request.url === "/api/database/reset") {
@@ -226,11 +197,9 @@ export function aiConversationMiddleware(options: {
             if (activeAiRuns.size || activeAgentRuns.size) {
               return sendJson(response, 409, { error: "数据库正在被 Run 使用，请先等待完成或取消 Run。" });
             }
-            databaseAccess.assertUnlocked();
             drafts.clear();
-            records.reset();
             agentRuntime = undefined;
-            return sendJson(response, 200, { ready: true });
+            return sendJson(response, 200, backend.resetDatabase());
           }
           return sendJson(response, 404, { error: "Not found" });
         } catch (error) {

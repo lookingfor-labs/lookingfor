@@ -1,6 +1,6 @@
 import type { DetectedEntity, EntityMapping } from "@brainbuddy/domain";
-import { collectMatches, shannonEntropy } from "./helpers";
-import type { Recognizer } from "./types";
+import { collectMatches, shannonEntropy } from "./helpers.ts";
+import type { Recognizer } from "./types.ts";
 
 export class EmailRecognizer implements Recognizer {
   readonly id = "email";
@@ -211,12 +211,15 @@ export class HighEntropySecretRecognizer implements Recognizer {
 
 export class KnownEntityRecognizer implements Recognizer {
   readonly id = "known-entity";
+  readonly #mappings: readonly EntityMapping[];
 
-  constructor(private readonly mappings: readonly EntityMapping[]) {}
+  constructor(mappings: readonly EntityMapping[]) {
+    this.#mappings = mappings;
+  }
 
   recognize(text: string): readonly DetectedEntity[] {
     const entities: DetectedEntity[] = [];
-    for (const mapping of this.mappings) {
+    for (const mapping of this.#mappings) {
       for (const name of [mapping.canonicalName, ...mapping.aliases]) {
         let position = text.indexOf(name);
         while (position !== -1) {

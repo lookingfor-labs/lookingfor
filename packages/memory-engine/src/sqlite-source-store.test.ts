@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -76,6 +76,7 @@ describe("SqliteSourceStore", () => {
     expect(JSON.stringify(database.prepare("SELECT * FROM sources").all())).not.toContain(secret);
     expect(JSON.stringify(database.prepare("SELECT * FROM credentials").all())).not.toContain(secret);
     database.close();
+    expect(statSync(databasePath).mode & 0o777).toBe(0o600);
 
     const reopened = new SqliteSourceStore({ ...options, sourceIdFactory: () => sourceIds.shift()! });
     expect(reopened.searchOffline("Figma").sources).toHaveLength(2);

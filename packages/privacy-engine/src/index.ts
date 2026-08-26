@@ -1,5 +1,5 @@
 import type { DetectedEntity, EntityMapping, PrivacyAnalysis } from "@brainbuddy/domain";
-import { resolveOverlaps } from "./helpers";
+import { resolveOverlaps } from "./helpers.ts";
 import {
   ApiKeyRecognizer,
   EmailRecognizer,
@@ -9,14 +9,14 @@ import {
   KeywordRecognizer,
   KnownEntityRecognizer,
   PrivateKeyRecognizer
-} from "./recognizers";
-import type { Recognizer } from "./types";
-import { findCredentialReferences } from "./credential-id";
+} from "./recognizers.ts";
+import type { Recognizer } from "./types.ts";
+import { findCredentialReferences } from "./credential-id.ts";
 
-export * from "./recognizers";
-export * from "./credential-id";
-export * from "./protection-plan";
-export * from "./types";
+export * from "./recognizers.ts";
+export * from "./credential-id.ts";
+export * from "./protection-plan.ts";
+export * from "./types.ts";
 
 export interface PrivacyEngineOptions {
   readonly knownEntities?: readonly EntityMapping[];
