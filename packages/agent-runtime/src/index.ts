@@ -505,7 +505,7 @@ function createTools(state: RunState, options: CreateAgentRuntimeOptions, approv
     parameters: searchSchema,
     executionMode: "sequential",
     async execute(_toolCallId, params) {
-      const result = options.records.search(params.query, params.limit ?? 8);
+      const result = searchProtectedRecords(options.records, params.query, params.limit ?? 8);
       result.sources.forEach(({ sourceId, credentialIds }) => {
         state.seenSourceIds.add(sourceId);
         credentialIds.forEach((id) => state.seenCredentialIds.add(id));
@@ -524,13 +524,18 @@ function createTools(state: RunState, options: CreateAgentRuntimeOptions, approv
     parameters: searchSchema,
     executionMode: "sequential",
     async execute(_toolCallId, params) {
-      const query = params.query.toLocaleLowerCase();
-      const matches = options.memories.list()
-        .filter(({ path, content }) => path.toLocaleLowerCase().includes(query) || content.toLocaleLowerCase().includes(query))
-        .slice(0, params.limit ?? 8)
+      const terms = searchTerms(params.query);
+      const limit = params.limit ?? 8;
+      const ranked = options.memories.list()
+        .map((memory, index) => ({ memory, index, score: memorySearchScore(memory, terms) }))
+        .filter(({ score }) => score > 0)
+        .sort((left, right) => right.score - left.score || left.index - right.index);
+      const matches = ranked
+        .slice(0, limit)
+        .map(({ memory }) => memory)
         .map(memoryProjection);
       matches.forEach((memory) => seeMemory(state, memory));
-      return safeToolResult({ memories: matches, truncated: matches.length === (params.limit ?? 8) });
+      return safeToolResult({ memories: matches, truncated: ranked.length > limit });
     }
   };
   const readMemory: AgentTool<typeof readMemorySchema> = {
@@ -614,6 +619,43 @@ function createTools(state: RunState, options: CreateAgentRuntimeOptions, approv
     }
   };
   return [searchLocalRecords, searchMemories, readMemory, writeMemory, finish];
+}
+
+function searchProtectedRecords(records: ProtectedRecordReader, query: string, limit: number): ProtectedRecordSearchResult {
+  const attempts = searchTerms(query).map((term) => records.search(term, limit));
+  const sources = new Map<string, DemoSourceSummary>();
+  const credentials = new Map<string, DemoCredentialSummary>();
+  attempts.forEach((result) => {
+    result.sources.forEach((source) => sources.set(source.sourceId, source));
+    result.credentials.forEach((credential) => credentials.set(credential.credentialId, credential));
+  });
+  const allSources = [...sources.values()];
+  const allCredentials = [...credentials.values()];
+  return {
+    sources: allSources.slice(0, limit),
+    credentials: allCredentials.slice(0, limit),
+    total: allSources.length + allCredentials.length,
+    truncated: attempts.some(({ truncated }) => truncated) || allSources.length > limit || allCredentials.length > limit
+  };
+}
+
+function searchTerms(query: string): string[] {
+  const trimmed = query.trim();
+  if (!trimmed) return [""];
+  const seen = new Set<string>();
+  return [trimmed, ...trimmed.split(/[\s,，、;；|]+/u).filter(Boolean)].filter((term) => {
+    const normalized = term.toLocaleLowerCase();
+    if (seen.has(normalized)) return false;
+    seen.add(normalized);
+    return true;
+  });
+}
+
+function memorySearchScore(memory: MemoryFile, terms: readonly string[]): number {
+  const haystack = `${memory.path}\n${memory.content}`.toLocaleLowerCase();
+  if (terms[0] === "") return 1;
+  if (terms[0] && haystack.includes(terms[0].toLocaleLowerCase())) return terms.length + 1;
+  return terms.slice(1).filter((term) => haystack.includes(term.toLocaleLowerCase())).length;
 }
 
 function validatePreparedReferences(state: RunState, options: CreateAgentRuntimeOptions, prepared: PreparedMemoryWrite): void {

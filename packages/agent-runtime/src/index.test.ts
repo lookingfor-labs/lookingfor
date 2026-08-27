@@ -216,6 +216,84 @@ describe("AgentRuntime", () => {
     expect(events.at(-1)).toBe("agent_completed");
   });
 
+  it("finds records and Memory when a model combines searchable terms into one phrase", async () => {
+    const queries: string[] = [];
+    const records: ProtectedRecordReader = {
+      search(query) {
+        queries.push(query);
+        if (query.toLocaleLowerCase() === "agentflow") {
+          return {
+            sources: [{
+              sourceId: "SOURCE_AGENTFLOW",
+              kind: "conversation",
+              protectedContent: "记录一下 agentflow 的密码是 [CREDENTIAL:CREDENTIAL_AGENTFLOW]",
+              credentialIds: ["CREDENTIAL_AGENTFLOW"],
+              savedAt: "2026-08-27T13:35:53.996Z"
+            }],
+            credentials: [],
+            total: 1,
+            truncated: false
+          };
+        }
+        if (query.toLocaleLowerCase() === "password") {
+          return {
+            sources: [],
+            credentials: [{
+              credentialId: "CREDENTIAL_AGENTFLOW",
+              entityType: "password",
+              maskedValue: "777•••88",
+              sourceIds: ["SOURCE_AGENTFLOW"],
+              savedAt: "2026-08-27T13:35:53.996Z"
+            }],
+            total: 1,
+            truncated: false
+          };
+        }
+        return { sources: [], credentials: [], total: 0, truncated: false };
+      },
+      sourceExists(id) { return id === "SOURCE_QUERY" || id === "SOURCE_AGENTFLOW"; },
+      credentialExists(id) { return id === "CREDENTIAL_AGENTFLOW"; }
+    };
+    const memories = new DemoMemorySession();
+    memories.apply({
+      operation: "create",
+      path: "memories/agentflow-credentials.md",
+      content: "# Agentflow Credentials\n\n- password: [CREDENTIAL:CREDENTIAL_AGENTFLOW]",
+      reason: "Fixture"
+    });
+    const faux = createFauxCore({ tokensPerSecond: 0 });
+    faux.setResponses([
+      fauxAssistantMessage([
+        fauxToolCall("search_local_records", { query: "agentflow password" }, { id: "phrase-record-search" }),
+        fauxToolCall("search_memories", { query: "agentflow password" }, { id: "phrase-memory-search" })
+      ], { stopReason: "toolUse" }),
+      fauxAssistantMessage(fauxToolCall("brainbuddy_finish", {
+        message: "已找到 Agentflow 密码凭据。",
+        references: [
+          { kind: "source", id: "SOURCE_AGENTFLOW" },
+          { kind: "credential", id: "CREDENTIAL_AGENTFLOW" },
+          { kind: "memory", id: "memories/agentflow-credentials.md" }
+        ],
+        memoryDecision: { action: "not_needed", reason: "本轮是纯查询。" }
+      }, { id: "phrase-finish" }), { stopReason: "toolUse" })
+    ]);
+    const runtime = createAgentRuntime({ model: faux.getModel(), streamFn: faux.streamSimple, records, memories });
+    const draft = runtime.prepare({
+      message: "找一下 agentflow 的密码",
+      conversationSourceId: "SOURCE_QUERY",
+      writePolicy: "require_approval"
+    });
+
+    await expect(runtime.start(draft.draftId, () => undefined).done).resolves.toMatchObject({
+      status: "completed",
+      references: expect.arrayContaining([
+        { kind: "credential", id: "CREDENTIAL_AGENTFLOW" },
+        { kind: "memory", id: "memories/agentflow-credentials.md" }
+      ])
+    });
+    expect(queries).toEqual(["agentflow password", "agentflow", "password"]);
+  });
+
   it("pauses the same Run for approval before committing an exact Prepared Write", async () => {
     const memories = new DemoMemorySession();
     const current = memories.apply({
