@@ -231,6 +231,47 @@ describe("AgentRuntime", () => {
     ]);
   });
 
+  it("allows a durable Memory task to complete after four tool batches and seven calls", async () => {
+    const memories = new DemoMemorySession();
+    const faux = createFauxCore({ tokensPerSecond: 0 });
+    const searchBatch = (prefix: string) => fauxAssistantMessage([
+      fauxToolCall("search_memories", { query: `${prefix}-one` }, { id: `${prefix}-one` }),
+      fauxToolCall("search_memories", { query: `${prefix}-two` }, { id: `${prefix}-two` })
+    ], { stopReason: "toolUse" });
+    faux.setResponses([
+      searchBatch("batch-1"),
+      searchBatch("batch-2"),
+      searchBatch("batch-3"),
+      fauxAssistantMessage(fauxToolCall("write_memory", {
+        operation: "create",
+        path: "memories/health-checkups.md",
+        content: "下周五去体检\n\n来源：[SOURCE:SOURCE_QUERY]",
+        reason: "记录体检安排"
+      }, { id: "batch-4-write" }), { stopReason: "toolUse" }),
+      fauxAssistantMessage(fauxToolCall("brainbuddy_finish", {
+        message: "体检安排已写入本地记忆。",
+        references: [
+          { kind: "source", id: "SOURCE_QUERY" },
+          { kind: "memory", id: "memories/health-checkups.md" }
+        ]
+      }, { id: "finish-after-four-batches" }), { stopReason: "toolUse" })
+    ]);
+    const runtime = createAgentRuntime({ model: faux.getModel(), streamFn: faux.streamSimple, records: protectedRecords(), memories });
+    const draft = runtime.prepare({
+      message: "记一下：下周五去体检\n\n来源：[SOURCE:SOURCE_QUERY]",
+      conversationSourceId: "SOURCE_QUERY",
+      writePolicy: "auto_apply"
+    });
+
+    await expect(runtime.start(draft.draftId, () => undefined).done).resolves.toMatchObject({
+      status: "completed",
+      budgets: { toolBatchCount: 4, toolCallCount: 7, modelRequestCount: 5 }
+    });
+    expect(memories.list()).toEqual([
+      expect.objectContaining({ path: "memories/health-checkups.md", content: expect.stringContaining("下周五去体检") })
+    ]);
+  });
+
   it("preserves protected Credential and Source references when writing a durable fact", async () => {
     const memories = new DemoMemorySession();
     const faux = createFauxCore({ tokensPerSecond: 0 });

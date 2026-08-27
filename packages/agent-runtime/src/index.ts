@@ -17,9 +17,9 @@ import type {
 } from "@brainbuddy/domain";
 import type { MemoryStore } from "@brainbuddy/memory-engine/memory";
 
-const MAX_LOCAL_TOOL_BATCHES = 3;
-const MAX_LOCAL_TOOL_CALLS = 8;
-const MAX_MODEL_REQUESTS = 5;
+const MAX_LOCAL_TOOL_BATCHES = 6;
+const MAX_LOCAL_TOOL_CALLS = 16;
+const MAX_MODEL_REQUESTS = 10;
 const MAX_FINISH_ATTEMPTS = 2;
 const MAX_MEMORY_CONTENT_LENGTH = 50_000;
 const searchSchema = Type.Object({
