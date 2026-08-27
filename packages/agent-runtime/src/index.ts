@@ -71,9 +71,18 @@ export interface PrepareAgentRunInput {
   readonly writePolicy: MemoryWritePolicy;
 }
 
+export type MemoryIntent =
+  | { readonly type: "no_write_required" }
+  | {
+      readonly type: "durable_fact";
+      readonly requiredSourceId: string;
+      readonly requiredCredentialIds: readonly string[];
+    };
+
 export interface AgentRunDraft extends PrepareAgentRunInput {
   readonly draftId: string;
   readonly createdAt: string;
+  readonly memoryIntent: MemoryIntent;
 }
 
 export interface AgentRunBudgets {
@@ -156,6 +165,7 @@ export interface SafeToolError {
     | "MEMORY_WRITE_REQUIRED"
     | "MEMORY_NOT_FOUND"
     | "REFERENCE_NOT_SEEN"
+    | "REQUIRED_REFERENCE_MISSING"
     | "RUN_CANCELLED"
     | "VERSION_CONFLICT"
     | "TOOL_FAILED";
@@ -222,6 +232,8 @@ interface MutableBudgets {
   finishAttemptCount: number;
 }
 
+type MemoryWriteOutcome = "none" | "pending" | "applied" | "denied";
+
 interface RunState {
   readonly runId: string;
   readonly draft: AgentRunDraft;
@@ -229,8 +241,7 @@ interface RunState {
   readonly seenCredentialIds: Set<string>;
   readonly seenMemoryPaths: Set<string>;
   readonly countedBatches: Set<string>;
-  readonly requiresMemoryWrite: boolean;
-  memoryWriteHandled: boolean;
+  memoryWriteOutcome: MemoryWriteOutcome;
   readonly budgets: MutableBudgets;
   readonly emit: (event: AgentRuntimeEvent) => void;
   agent?: Agent;
@@ -288,14 +299,29 @@ class ApprovalGate {
 
 const systemPrompt = `你是 BrainBuddy 的受控本地 Agent。
 使用已注册工具搜索受保护的本地记录与 Memory 文件；你无法读取 Source 原文或 Credential 明文。
+你收到的是经过 BrainBuddy 本地保护层处理后的用户消息；其中部分原始值可能已经替换为 [CREDENTIAL:<id>]，它是原始值的有效不透明引用。
+不要读取、猜测、恢复或重新创建 Credential 明文。保存长期信息时，必须把已有 [CREDENTIAL:<id>] 原样写入 Memory，并同时保留本轮 [SOURCE:<id>] 以便用户追溯原始记录。
 用户陈述账号、密码、Key、Token 等可复用事实，或明确要求记住、记录、保存时，必须先用 write_memory 创建或更新 Memory，再结束 Run；不要求用户额外说“记住”。
+用户只是在查找、查询或询问信息时，不得仅因消息中出现 Credential 或 Source 引用而新增 Memory。
 如果消息中是邮箱原文，它就是 AI 可见的普通账号信息；只有 [CREDENTIAL:<id>] 才能描述为凭据，绝不能把邮箱自行声称为凭据。
 最终回复只陈述本轮已完成的结果，不得提出问题、邀请继续回复，或声称还可以继续执行当前 Run。
 你必须在完成任务后调用 brainbuddy_finish，并且它必须是该 AssistantMessage 中唯一的工具调用。
 最终回复只能引用本 Run 已见过的 ID 与 Memory Path。不要只输出普通文本后结束。`;
 
 export function requiresDurableMemory(message: string): boolean {
-  return /(?:记住|记录(?:一下)?|保存)|(?:账号|账户|邮箱|密码|(?:api[ _-]?)?key|token|密钥)\s*(?:是|为|有(?!什么|哪些|没有)|包括|包含)/iu.test(message);
+  if (/(?:记住|记录(?:一下)?|保存)|(?:账号|账户|邮箱|密码|(?:api[ _-]?)?key|token|密钥)\s*(?:是|为|有(?!什么|哪些|没有)|包括|包含)/iu.test(message)) return true;
+  const containsCredentialReference = /\[CREDENTIAL:[^\]\r\n]+\]/u.test(message);
+  const isQuery = /(?:查找|查询|搜索|找(?:到|一下)?|查看|有没有|有哪些|是什么|哪里|哪一个|哪个)/u.test(message);
+  return containsCredentialReference && !isQuery;
+}
+
+function memoryIntentFor(message: string, conversationSourceId: string): MemoryIntent {
+  if (!requiresDurableMemory(message)) return { type: "no_write_required" };
+  return {
+    type: "durable_fact",
+    requiredSourceId: conversationSourceId,
+    requiredCredentialIds: [...new Set([...message.matchAll(/\[CREDENTIAL:([^\]\r\n]+)\]/gu)].map((match) => match[1]!))]
+  };
 }
 
 export function createAgentRuntime(options: CreateAgentRuntimeOptions): AgentRuntime {
@@ -312,7 +338,12 @@ export function createAgentRuntime(options: CreateAgentRuntimeOptions): AgentRun
       if (input.writePolicy === "auto_apply" && !options.memories.revisionsAvailable()) {
         throw new Error("REVISION_STORE_UNAVAILABLE: Automatic Memory writes require Revisions");
       }
-      const draft = Object.freeze({ ...input, draftId: idFactory(), createdAt: now().toISOString() });
+      const memoryIntent = memoryIntentFor(input.message, input.conversationSourceId);
+      if (memoryIntent.type === "durable_fact") {
+        const unknownCredentialId = memoryIntent.requiredCredentialIds.find((id) => !options.records.credentialExists(id));
+        if (unknownCredentialId) throw new Error("Conversation contains an unknown Credential reference");
+      }
+      const draft = Object.freeze({ ...input, memoryIntent, draftId: idFactory(), createdAt: now().toISOString() });
       drafts.set(draft.draftId, draft);
       return draft;
     },
@@ -343,11 +374,10 @@ export function createAgentRuntime(options: CreateAgentRuntimeOptions): AgentRun
         runId,
         draft,
         seenSourceIds: new Set([draft.conversationSourceId]),
-        seenCredentialIds: new Set(),
+        seenCredentialIds: new Set(draft.memoryIntent.type === "durable_fact" ? draft.memoryIntent.requiredCredentialIds : []),
         seenMemoryPaths: new Set(),
         countedBatches: new Set(),
-        requiresMemoryWrite: requiresDurableMemory(draft.message),
-        memoryWriteHandled: false,
+        memoryWriteOutcome: "none",
         budgets: { toolBatchCount: 0, toolCallCount: 0, modelRequestCount: 0, finishAttemptCount: 0 },
         emit,
         cancelled: false
@@ -492,26 +522,31 @@ function createTools(state: RunState, options: CreateAgentRuntimeOptions, approv
   const writeMemory: AgentTool<typeof writeMemorySchema> = {
     name: "write_memory",
     label: "Write a Memory file",
-    description: "Create or exactly edit one controlled Memory file. The active Run policy controls approval.",
+    description: "Create or exactly edit one controlled Memory file. Preserve every existing [CREDENTIAL:<id>] as an opaque reference and include the current [SOURCE:<id>] for durable facts. Never recover or replace Credential plaintext. The active Run policy controls approval.",
     parameters: writeMemorySchema,
     executionMode: "sequential",
     async execute(toolCallId, params, signal) {
       const request = normalizeMemoryWrite(params);
       const prepared = options.memories.prepare(request);
       validatePreparedReferences(state, options, prepared);
-      state.memoryWriteHandled = true;
+      validateRequiredMemoryReferences(state, prepared);
+      if (state.memoryWriteOutcome !== "applied") state.memoryWriteOutcome = "pending";
       const autoApply = state.draft.writePolicy === "auto_apply";
       if (!autoApply) {
         state.emit({ type: "approval_required", runId: state.runId, toolCallId, prepared });
         const decision = await approvalGate.wait(state.runId, prepared, signal);
         state.emit({ type: decision === "approve" ? "approved" : "denied", runId: state.runId, approvalId: prepared.approvalId });
-        if (decision === "deny") return safeToolResult({ status: "denied", approvalId: prepared.approvalId });
+        if (decision === "deny") {
+          if (state.memoryWriteOutcome !== "applied") state.memoryWriteOutcome = "denied";
+          return safeToolResult({ status: "denied", approvalId: prepared.approvalId });
+        }
       }
       const committed = options.memories.commit(prepared, {
         runId: state.runId,
         toolCallId,
         writePolicy: state.draft.writePolicy
       });
+      state.memoryWriteOutcome = "applied";
       seeMemory(state, committed.memory);
       if (autoApply) state.emit({ type: "auto_applied", runId: state.runId, approvalId: prepared.approvalId });
       state.emit({
@@ -531,13 +566,18 @@ function createTools(state: RunState, options: CreateAgentRuntimeOptions, approv
     parameters: finishSchema,
     executionMode: "sequential",
     async execute(_toolCallId, params) {
-      if (state.requiresMemoryWrite && !state.memoryWriteHandled) {
+      if (state.draft.memoryIntent.type === "durable_fact"
+        && state.memoryWriteOutcome !== "applied"
+        && state.memoryWriteOutcome !== "denied") {
         throw new Error("MEMORY_WRITE_REQUIRED: This message contains a durable fact that must be handled with write_memory before finishing");
       }
       const references = params.references as AgentReference[];
       const unseen = references.find((reference) => !referenceWasSeen(state, reference));
       if (unseen) throw new Error(`REFERENCE_NOT_SEEN: ${unseen.kind} reference was not seen in this Run`);
-      state.finish = { message: params.message, references };
+      state.finish = {
+        message: state.memoryWriteOutcome === "denied" ? "Memory 写入未获批准，本轮没有修改本地记忆。" : params.message,
+        references
+      };
       return { ...safeToolResult({ accepted: true }), terminate: true };
     }
   };
@@ -554,6 +594,15 @@ function validatePreparedReferences(state: RunState, options: CreateAgentRuntime
   const invalidCredential = prepared.credentialIds.find((id) => !existingCredentials.has(id)
     && (!state.seenCredentialIds.has(id) || !options.records.credentialExists(id)));
   if (invalidCredential) throw new Error("REFERENCE_NOT_SEEN: Credential reference was not seen in this Run");
+}
+
+function validateRequiredMemoryReferences(state: RunState, prepared: PreparedMemoryWrite): void {
+  const intent = state.draft.memoryIntent;
+  if (intent.type !== "durable_fact") return;
+  if (!prepared.sourceIds.includes(intent.requiredSourceId)
+    || intent.requiredCredentialIds.some((id) => !prepared.credentialIds.includes(id))) {
+    throw new Error("REQUIRED_REFERENCE_MISSING: A protected reference required by this durable fact is missing from the Memory write");
+  }
 }
 
 function preflightBatch(state: RunState, assistantMessage: { readonly content: readonly unknown[] }): { readonly block: true; readonly reason: string } | undefined {
@@ -629,6 +678,7 @@ const SAFE_ERROR_CODES = new Set<SafeToolError["code"]>([
   "MEMORY_WRITE_REQUIRED",
   "MEMORY_NOT_FOUND",
   "REFERENCE_NOT_SEEN",
+  "REQUIRED_REFERENCE_MISSING",
   "RUN_CANCELLED",
   "VERSION_CONFLICT"
 ]);
@@ -657,6 +707,7 @@ function safeErrorMessage(code: Exclude<SafeToolError["code"], "TOOL_FAILED">): 
     MEMORY_WRITE_REQUIRED: "A durable fact must be handled with write_memory before finishing",
     MEMORY_NOT_FOUND: "The requested Memory was not found",
     REFERENCE_NOT_SEEN: "The reference was not seen in this Run",
+    REQUIRED_REFERENCE_MISSING: "A protected reference required by this durable fact is missing from the Memory write",
     RUN_CANCELLED: "The Agent Run was cancelled",
     VERSION_CONFLICT: "The Memory changed since it was read"
   };

@@ -231,6 +231,148 @@ describe("AgentRuntime", () => {
     ]);
   });
 
+  it("preserves protected Credential and Source references when writing a durable fact", async () => {
+    const memories = new DemoMemorySession();
+    const faux = createFauxCore({ tokensPerSecond: 0 });
+    faux.setResponses([
+      fauxAssistantMessage(fauxToolCall("write_memory", {
+        operation: "create",
+        path: "memories/figma.md",
+        content: "Figma password is protected.\n\nSource: [SOURCE:SOURCE_QUERY]",
+        reason: "Remember the protected Figma password"
+      }, { id: "write-without-credential" }), { stopReason: "toolUse" }),
+      fauxAssistantMessage(fauxToolCall("write_memory", {
+        operation: "create",
+        path: "memories/figma.md",
+        content: "Figma password: [CREDENTIAL:CREDENTIAL_FIGMA]\n\nSource: [SOURCE:SOURCE_QUERY]",
+        reason: "Preserve the protected Figma password reference"
+      }, { id: "write-protected-reference" }), { stopReason: "toolUse" }),
+      fauxAssistantMessage(fauxToolCall("brainbuddy_finish", {
+        message: "The protected Figma password reference was saved.",
+        references: [
+          { kind: "source", id: "SOURCE_QUERY" },
+          { kind: "credential", id: "CREDENTIAL_FIGMA" },
+          { kind: "memory", id: "memories/figma.md" }
+        ]
+      }, { id: "finish-protected-reference" }), { stopReason: "toolUse" })
+    ]);
+    const runtime = createAgentRuntime({ model: faux.getModel(), streamFn: faux.streamSimple, records: protectedRecords(), memories });
+    const errors: unknown[] = [];
+    const draft = runtime.prepare({
+      message: "Figma：[CREDENTIAL:CREDENTIAL_FIGMA]\n\n来源：[SOURCE:SOURCE_QUERY]",
+      conversationSourceId: "SOURCE_QUERY",
+      writePolicy: "auto_apply"
+    });
+
+    const result = await runtime.start(draft.draftId, (event) => {
+      if (event.type === "tool_result" && event.isError) errors.push(event.result);
+    }).done;
+
+    expect(result).toMatchObject({ status: "completed" });
+    expect(errors).toContainEqual({
+      code: "REQUIRED_REFERENCE_MISSING",
+      message: "A protected reference required by this durable fact is missing from the Memory write",
+      retryable: true
+    });
+    expect(memories.list()).toEqual([
+      expect.objectContaining({
+        path: "memories/figma.md",
+        content: "Figma password: [CREDENTIAL:CREDENTIAL_FIGMA]\n\nSource: [SOURCE:SOURCE_QUERY]"
+      })
+    ]);
+  });
+
+  it("reports that a durable fact was not saved after the user denies its Memory write", async () => {
+    const memories = new DemoMemorySession();
+    const faux = createFauxCore({ tokensPerSecond: 0 });
+    faux.setResponses([
+      fauxAssistantMessage(fauxToolCall("write_memory", {
+        operation: "create",
+        path: "memories/figma.md",
+        content: "Figma password: [CREDENTIAL:CREDENTIAL_FIGMA]\n\nSource: [SOURCE:SOURCE_QUERY]",
+        reason: "Remember the protected Figma password"
+      }, { id: "denied-write" }), { stopReason: "toolUse" }),
+      fauxAssistantMessage(fauxToolCall("brainbuddy_finish", {
+        message: "The Figma password was saved.",
+        references: [{ kind: "source", id: "SOURCE_QUERY" }]
+      }, { id: "finish-after-denial" }), { stopReason: "toolUse" })
+    ]);
+    const runtime = createAgentRuntime({ model: faux.getModel(), streamFn: faux.streamSimple, records: protectedRecords(), memories });
+    const draft = runtime.prepare({
+      message: "Figma 密码是 [CREDENTIAL:CREDENTIAL_FIGMA]\n\n来源：[SOURCE:SOURCE_QUERY]",
+      conversationSourceId: "SOURCE_QUERY",
+      writePolicy: "require_approval"
+    });
+    let notifyApproval: ((event: Extract<AgentRuntimeEvent, { type: "approval_required" }>) => void) | undefined;
+    const approval = new Promise<Extract<AgentRuntimeEvent, { type: "approval_required" }>>((resolve) => { notifyApproval = resolve; });
+    const handle = runtime.start(draft.draftId, (event) => {
+      if (event.type === "approval_required") notifyApproval?.(event);
+    });
+    const pending = await approval;
+
+    expect(await runtime.resolveApproval(handle.runId, pending.prepared.approvalId, "deny")).toEqual({ status: "denied" });
+    await expect(handle.done).resolves.toMatchObject({
+      status: "completed",
+      message: "Memory 写入未获批准，本轮没有修改本地记忆。"
+    });
+    expect(memories.list()).toEqual([]);
+  });
+
+  it("does not complete a durable fact after an approved Memory write loses a version race", async () => {
+    const memories = new DemoMemorySession();
+    const current = memories.apply({
+      operation: "create",
+      path: "memories/figma.md",
+      content: "Figma account: old@example.com\n\nSource: [SOURCE:SOURCE_QUERY]",
+      reason: "Create Figma account Memory"
+    });
+    const faux = createFauxCore({ tokensPerSecond: 0 });
+    faux.setResponses([
+      fauxAssistantMessage(fauxToolCall("write_memory", {
+        operation: "edit",
+        path: current.path,
+        expectedVersion: current.version,
+        edits: [{ type: "replace", oldText: "old@example.com", newText: "new@example.com" }],
+        reason: "Update the Figma account"
+      }, { id: "racing-write" }), { stopReason: "toolUse" }),
+      fauxAssistantMessage(fauxToolCall("brainbuddy_finish", {
+        message: "The Figma account was saved.",
+        references: [{ kind: "source", id: "SOURCE_QUERY" }]
+      }, { id: "finish-after-conflict" }), { stopReason: "toolUse" })
+    ]);
+    const runtime = createAgentRuntime({ model: faux.getModel(), streamFn: faux.streamSimple, records: protectedRecords(), memories });
+    const errors: unknown[] = [];
+    const draft = runtime.prepare({
+      message: "Figma 的账号是 new@example.com\n\n来源：[SOURCE:SOURCE_QUERY]",
+      conversationSourceId: "SOURCE_QUERY",
+      writePolicy: "require_approval"
+    });
+    let notifyApproval: ((event: Extract<AgentRuntimeEvent, { type: "approval_required" }>) => void) | undefined;
+    const approval = new Promise<Extract<AgentRuntimeEvent, { type: "approval_required" }>>((resolve) => { notifyApproval = resolve; });
+    const handle = runtime.start(draft.draftId, (event) => {
+      if (event.type === "approval_required") notifyApproval?.(event);
+      if (event.type === "tool_result" && event.isError) errors.push(event.result);
+    });
+    const pending = await approval;
+    memories.apply({
+      operation: "update",
+      path: current.path,
+      expectedVersion: current.version,
+      content: "Figma account: external@example.com\n\nSource: [SOURCE:SOURCE_QUERY]",
+      reason: "Simulate a concurrent edit"
+    });
+
+    await runtime.resolveApproval(handle.runId, pending.prepared.approvalId, "approve");
+
+    await expect(handle.done).resolves.toMatchObject({ status: "failed" });
+    expect(errors).toContainEqual({
+      code: "MEMORY_WRITE_REQUIRED",
+      message: "A durable fact must be handled with write_memory before finishing",
+      retryable: true
+    });
+    expect(memories.list()[0]?.content).toContain("external@example.com");
+  });
+
   it("cancels an approval wait and expires a late decision", async () => {
     const memories = new DemoMemorySession();
     const current = memories.apply({ operation: "create", path: "memories/cancel.md", content: "before", reason: "Create" });
