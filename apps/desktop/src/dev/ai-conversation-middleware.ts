@@ -16,6 +16,7 @@ import {
   PrepareAgentRunRequestSchema,
   PrepareAiConversationRequestSchema,
   ProtectionRequestSchema,
+  RevealCredentialRequestSchema,
   RevealDemoSourceRequestSchema,
   SearchDemoSourcesRequestSchema,
   TestModelConnectionRequestSchema
@@ -95,6 +96,10 @@ export function aiConversationMiddleware(options: {
           if (request.url === "/api/database/reveal") {
             const { sourceId } = RevealDemoSourceRequestSchema.parse(await readJson(request));
             return sendJson(response, 200, backend.reveal(sourceId));
+          }
+          if (request.url === "/api/database/reveal-credential") {
+            const { credentialId } = RevealCredentialRequestSchema.parse(await readJson(request));
+            return sendJson(response, 200, backend.revealCredential(credentialId));
           }
           if (request.url === "/api/ai-conversation/prepare") {
             const { text } = PrepareAiConversationRequestSchema.parse(await readJson(request));

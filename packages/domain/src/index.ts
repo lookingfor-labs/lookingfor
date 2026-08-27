@@ -114,6 +114,14 @@ export interface DemoCredentialSummary {
   readonly savedAt: string;
 }
 
+export interface DemoCredentialReveal {
+  readonly credentialId: string;
+  readonly entityType: EntityType;
+  readonly value: string;
+  readonly sourceIds: readonly string[];
+  readonly savedAt: string;
+}
+
 export interface DemoOfflineSearchResult {
   readonly sources: readonly DemoSourceSummary[];
   readonly credentials: readonly DemoCredentialSummary[];

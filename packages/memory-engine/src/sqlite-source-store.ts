@@ -3,6 +3,7 @@ import { chmodSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import type {
   CredentialDraft,
+  DemoCredentialReveal,
   DemoCredentialSummary,
   DatabaseResetResult,
   DemoOfflineSearchResult,
@@ -145,6 +146,28 @@ export class SqliteSourceStore {
         iv: String(row.original_iv),
         tag: String(row.original_tag)
       }, this.#key),
+      savedAt: String(row.saved_at)
+    };
+  }
+
+  revealCredential(credentialId: string): DemoCredentialReveal {
+    const row = this.#database.prepare(`
+      SELECT credential_id, entity_type, secret_ciphertext, secret_iv, secret_tag, saved_at
+      FROM credentials WHERE credential_id = ?
+    `).get(credentialId) as Record<string, unknown> | undefined;
+    if (!row) throw new Error("Credential record not found");
+    const sourceRows = this.#database.prepare(`
+      SELECT source_id FROM credential_sources WHERE credential_id = ? ORDER BY source_id
+    `).all(credentialId) as Array<{ source_id: unknown }>;
+    return {
+      credentialId: String(row.credential_id),
+      entityType: row.entity_type as EntityType,
+      value: decrypt({
+        ciphertext: String(row.secret_ciphertext),
+        iv: String(row.secret_iv),
+        tag: String(row.secret_tag)
+      }, this.#key),
+      sourceIds: sourceRows.map(({ source_id }) => String(source_id)),
       savedAt: String(row.saved_at)
     };
   }

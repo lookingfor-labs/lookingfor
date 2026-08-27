@@ -6,6 +6,7 @@ import {
   getLocalStorageSettings,
   getModelConnectionStatus,
   prepareAgentRun,
+  revealCredential,
   testModelConnection
 } from "./App";
 
@@ -112,6 +113,27 @@ describe("browser database access", () => {
         writePolicy: "require_approval",
         decisions
       })
+    }));
+  });
+
+  it("reveals one Credential through the browser backend only after a user click", async () => {
+    vi.stubGlobal("window", { brainBuddy: undefined });
+    const credential = {
+      credentialId: "c22f0625-62a6-4743-8e0d-d41dea186351",
+      entityType: "password" as const,
+      value: "77778888",
+      sourceIds: ["SOURCE_42201572-826f-43e4-ba68-2030744cb921"],
+      savedAt: "2026-08-27T13:35:53.996Z"
+    };
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(credential), {
+      status: 200,
+      headers: { "content-type": "application/json" }
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(revealCredential(credential.credentialId)).resolves.toEqual(credential);
+    expect(fetchMock).toHaveBeenCalledWith("/api/database/reveal-credential", expect.objectContaining({
+      body: JSON.stringify({ credentialId: credential.credentialId })
     }));
   });
 });

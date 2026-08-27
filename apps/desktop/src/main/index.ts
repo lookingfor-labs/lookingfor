@@ -41,6 +41,7 @@ import {
   PrepareAiConversationRequestSchema,
   PREVIEW_PROTECTION_CHANNEL,
   ProtectionRequestSchema,
+  REVEAL_CREDENTIAL_CHANNEL,
   REVEAL_DEMO_SOURCE_CHANNEL,
   RESOLVE_AGENT_APPROVAL_CHANNEL,
   RESET_MEMORY_CONTEXT_CHANNEL,
@@ -49,6 +50,7 @@ import {
   ResolveAgentApprovalRequestSchema,
   REVERT_MEMORY_REVISION_CHANNEL,
   RevertMemoryRevisionRequestSchema,
+  RevealCredentialRequestSchema,
   RevealDemoSourceRequestSchema,
   SEARCH_DEMO_SOURCES_CHANNEL,
   SearchDemoSourcesRequestSchema,
@@ -160,6 +162,10 @@ app.whenReady().then(() => {
   ipcMain.handle(REVEAL_DEMO_SOURCE_CHANNEL, (_event, request: unknown) => {
     const { sourceId } = RevealDemoSourceRequestSchema.parse(request);
     return localBackend!.reveal(sourceId);
+  });
+  ipcMain.handle(REVEAL_CREDENTIAL_CHANNEL, (_event, request: unknown) => {
+    const { credentialId } = RevealCredentialRequestSchema.parse(request);
+    return localBackend!.revealCredential(credentialId);
   });
   ipcMain.handle(PREPARE_AI_CONVERSATION_CHANNEL, (_event, request: unknown) => {
     const { text } = PrepareAiConversationRequestSchema.parse(request);

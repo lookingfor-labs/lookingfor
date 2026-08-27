@@ -92,11 +92,24 @@ body.mvp-route { min-width: 0; background: #f6f7fb; }
 .mvp-mini-panel h3 { margin: 0 0 11px; color: #414a5e; font-size: 12px; }
 .mvp-mini-panel p { margin: 0; color: #586176; font-size: 13px; line-height: 1.7; white-space: pre-wrap; }
 .mvp-answer { background: #f7f5ff; }
+.mvp-credential-reference { display: inline; border: 0; border-bottom: 1px dashed #7568cf; background: transparent; padding: 0; color: #584daf; cursor: pointer; font: inherit; overflow-wrap: anywhere; }
+.mvp-credential-reference:hover:not(:disabled) { color: #3f329d; border-bottom-style: solid; }
+.mvp-credential-reference:disabled { cursor: wait; opacity: .55; }
 .mvp-chips { display: flex; flex-wrap: wrap; gap: 7px; }
 .mvp-chips button { min-height: 36px; border: 1px solid var(--mvp-line); border-radius: 10px; background: var(--mvp-panel); padding: 0 11px; color: #515a6e; cursor: pointer; font-size: 11px; }
 .mvp-chips button:hover { border-color: #bcb5ef; color: var(--mvp-accent-strong); }
 .mvp-reference-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
 .mvp-reference-list code { border: 1px solid #d8d4f2; border-radius: 8px; background: rgba(253, 253, 255, .72); padding: 5px 7px; color: #584daf; font-size: 9px; }
+.mvp-reference-list button { border: 1px solid #c8c1ef; border-radius: 8px; background: #fdfcff; padding: 5px 7px; color: #584daf; cursor: pointer; font: 9px ui-monospace, monospace; }
+.mvp-reference-list button:hover:not(:disabled) { border-color: #8f83dc; background: #f3f0ff; }
+.mvp-reference-list button:disabled { cursor: wait; opacity: .55; }
+.mvp-inline-error { margin-top: 12px !important; color: #85363c !important; font-size: 11px !important; }
+.mvp-credential-reveal { margin-top: 12px; border: 1px solid #c8c1ef; border-radius: 10px; background: #fdfcff; padding: 11px; }
+.mvp-credential-reveal > div { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.mvp-credential-reveal strong { color: #464064; font-size: 11px; }
+.mvp-credential-reveal button { display: grid; place-items: center; border: 0; background: transparent; color: #706986; cursor: pointer; }
+.mvp-credential-reveal > code { display: block; margin-top: 9px; color: #332a72; font: 13px/1.5 ui-monospace, monospace; overflow-wrap: anywhere; }
+.mvp-credential-reveal > small { display: block; margin-top: 7px; color: #746e85; font-size: 9px; }
 .mvp-approval { margin-top: 15px; overflow: hidden; border: 1px solid #c7a6a8; border-radius: 14px; background: #fff9f8; }
 .mvp-approval > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 13px 15px; }
 .mvp-approval strong, .mvp-approval span { display: block; }

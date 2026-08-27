@@ -27,6 +27,7 @@ import type {
   DetectedEntity,
   DemoCredentialSummary,
   DatabaseAccessStatus,
+  DemoCredentialReveal,
   DemoSaveReceipt,
   DemoSourceReveal,
   DemoSourceSummary,
@@ -54,6 +55,7 @@ import {
   lockDatabase,
   prepareAgentRun,
   previewProtection,
+  revealCredential,
   resolveAgentApproval,
   revealDemoSource,
   resetDatabase,
@@ -115,7 +117,7 @@ export function MvpApp({ onOpenDemo }: { readonly onOpenDemo: () => void }): JSX
       </div>
     </aside>
     <main className="mvp-main">
-      <div hidden={page !== "home"}><HomePage memoryWritePolicy={runtimeSettings?.memoryWritePolicy ?? "require_approval"} onSaved={() => setRecordRefresh((value) => value + 1)} /></div>
+      <div hidden={page !== "home"}><HomePage active={page === "home"} memoryWritePolicy={runtimeSettings?.memoryWritePolicy ?? "require_approval"} onSaved={() => setRecordRefresh((value) => value + 1)} /></div>
       <div hidden={page !== "database"}><DatabasePage refreshToken={recordRefresh} /></div>
       <div hidden={page !== "memories"}><MemoriesPage refreshToken={memoryRefresh} onRefresh={() => setMemoryRefresh((value) => value + 1)} /></div>
       <div hidden={page !== "settings"}><SettingsPage runtimeSettings={runtimeSettings} onRuntimeSettingsChange={setRuntimeSettings} /></div>
@@ -127,7 +129,7 @@ function PageHeader({ title, copy }: { readonly title: string; readonly copy: st
   return <header className="mvp-page-head"><h1>{title}</h1><p>{copy}</p></header>;
 }
 
-function HomePage({ memoryWritePolicy, onSaved }: { readonly memoryWritePolicy: MemoryWritePolicy; readonly onSaved: () => void }): JSX.Element {
+function HomePage({ active, memoryWritePolicy, onSaved }: { readonly active: boolean; readonly memoryWritePolicy: MemoryWritePolicy; readonly onSaved: () => void }): JSX.Element {
   const [question, setQuestion] = useState("");
   const [questionAnalysis, setQuestionAnalysis] = useState<PrivacyAnalysis>();
   const [questionPreview, setQuestionPreview] = useState<ProtectionPreview>();
@@ -139,6 +141,9 @@ function HomePage({ memoryWritePolicy, onSaved }: { readonly memoryWritePolicy: 
   const [isRunning, setIsRunning] = useState(false);
   const [answer, setAnswer] = useState<string>();
   const [references, setReferences] = useState<readonly AgentReference[]>([]);
+  const [revealedCredential, setRevealedCredential] = useState<DemoCredentialReveal>();
+  const [revealingCredentialId, setRevealingCredentialId] = useState<string>();
+  const [credentialRevealError, setCredentialRevealError] = useState<string>();
   const [approval, setApproval] = useState<PreparedMemoryWrite>();
   const [error, setError] = useState<string>();
   const [saveForm, setSaveForm] = useState({ keyword: "Figma", account: "lu@example.com", secret: "", note: "UI 原型设计主账号" });
@@ -162,6 +167,13 @@ function HomePage({ memoryWritePolicy, onSaved }: { readonly memoryWritePolicy: 
     const timeout = window.setTimeout(() => void analyzeQuestion(question, sequence), 240);
     return () => window.clearTimeout(timeout);
   }, [question]);
+
+  useEffect(() => {
+    if (!active) {
+      setRevealedCredential(undefined);
+      setCredentialRevealError(undefined);
+    }
+  }, [active]);
 
   async function analyzeQuestion(text: string, sequence: number): Promise<void> {
     try {
@@ -226,6 +238,8 @@ function HomePage({ memoryWritePolicy, onSaved }: { readonly memoryWritePolicy: 
     setIsRunning(true);
     setAnswer(undefined);
     setReferences([]);
+    setRevealedCredential(undefined);
+    setCredentialRevealError(undefined);
     setApproval(undefined);
     setError(undefined);
     try {
@@ -260,6 +274,19 @@ function HomePage({ memoryWritePolicy, onSaved }: { readonly memoryWritePolicy: 
       if (result.status === "expired") setError("这次写入审批已经过期，请重新发起任务。");
     } catch (cause) {
       setError(messageFrom(cause));
+    }
+  }
+
+  async function revealAnswerCredential(credentialId: string): Promise<void> {
+    setRevealingCredentialId(credentialId);
+    setCredentialRevealError(undefined);
+    setRevealedCredential(undefined);
+    try {
+      setRevealedCredential(await revealCredential(credentialId));
+    } catch (cause) {
+      setCredentialRevealError(messageFrom(cause));
+    } finally {
+      setRevealingCredentialId(undefined);
     }
   }
 
@@ -304,7 +331,7 @@ function HomePage({ memoryWritePolicy, onSaved }: { readonly memoryWritePolicy: 
         </div>
         <div className="mvp-suggestions">
           <div className="mvp-mini-panel"><h3>试着问这些</h3><div className="mvp-chips">{querySuggestions.map((item) => <button key={item} type="button" onClick={() => updateQuestion(item)}>{item}</button>)}</div></div>
-          <div className="mvp-mini-panel mvp-answer" aria-live="polite"><h3>{answer ? "本轮结果" : "回答会显示在这里"}</h3><p>{answer || "BrainBuddy 会先检索本地 Memory 与受保护记录，只向模型发送必要的安全视图。"}</p>{references.length > 0 && <div className="mvp-reference-list">{references.map((reference) => <code key={`${reference.kind}:${reference.id}`}>{reference.kind}: {reference.id}</code>)}</div>}</div>
+          <div className="mvp-mini-panel mvp-answer" aria-live="polite"><h3>{answer ? "本轮结果" : "回答会显示在这里"}</h3>{answer ? <CredentialAwareAnswer text={answer} revealingCredentialId={revealingCredentialId} onReveal={revealAnswerCredential} /> : <p>BrainBuddy 会先检索本地 Memory 与受保护记录，只向模型发送必要的安全视图。</p>}{references.length > 0 && <div className="mvp-reference-list">{references.map((reference) => reference.kind === "credential" ? <button type="button" key={`${reference.kind}:${reference.id}`} disabled={revealingCredentialId === reference.id} onClick={() => void revealAnswerCredential(reference.id)}>[CREDENTIAL:{reference.id}]</button> : <code key={`${reference.kind}:${reference.id}`}>{reference.kind}: {reference.id}</code>)}</div>}{credentialRevealError && <p className="mvp-inline-error" role="alert">{credentialRevealError}</p>}{revealedCredential && <div className="mvp-credential-reveal" role="region" aria-label="已解锁的凭据明文"><div><strong>{questionEntityTypeLabel(revealedCredential.entityType)}明文</strong><button type="button" aria-label="关闭凭据明文" onClick={() => setRevealedCredential(undefined)}><X size={16} /></button></div><code>{revealedCredential.value}</code><small>仅在当前界面临时显示，不会发送给 AI。</small></div>}</div>
         </div>
         {approval && <div className="mvp-approval"><div><strong>允许写入 {approval.path}？</strong><span>{approval.reason}</span></div><pre>{approval.diff}</pre><div><button className="mvp-secondary" type="button" onClick={() => void decide("deny")}>拒绝</button><button className="mvp-primary" type="button" onClick={() => void decide("approve")}>批准写入</button></div></div>}
       </section>
@@ -347,6 +374,34 @@ function QuestionProtectionNotice({ analysis, preview, decisions, isChecking, er
     })}</div>
     <div className="mvp-protection-preview"><span>AI 可见版本</span><code>{preview.protectedContent}</code></div>
   </section>;
+}
+
+export type CredentialTextPart =
+  | { readonly type: "text"; readonly value: string }
+  | { readonly type: "credential"; readonly credentialId: string; readonly value: string };
+
+export function splitCredentialReferences(text: string): CredentialTextPart[] {
+  const pattern = /\[CREDENTIAL:([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\]/giu;
+  const parts: CredentialTextPart[] = [];
+  let cursor = 0;
+  for (const match of text.matchAll(pattern)) {
+    const index = match.index;
+    if (index > cursor) parts.push({ type: "text", value: text.slice(cursor, index) });
+    parts.push({ type: "credential", credentialId: match[1]!, value: match[0] });
+    cursor = index + match[0].length;
+  }
+  if (cursor < text.length) parts.push({ type: "text", value: text.slice(cursor) });
+  return parts.length ? parts : [{ type: "text", value: text }];
+}
+
+function CredentialAwareAnswer({ text, revealingCredentialId, onReveal }: {
+  readonly text: string;
+  readonly revealingCredentialId: string | undefined;
+  readonly onReveal: (credentialId: string) => Promise<void>;
+}): JSX.Element {
+  return <p>{splitCredentialReferences(text).map((part, index) => part.type === "text"
+    ? <span key={`text:${index}`}>{part.value}</span>
+    : <button className="mvp-credential-reference" type="button" key={`${part.credentialId}:${index}`} disabled={revealingCredentialId === part.credentialId} onClick={() => void onReveal(part.credentialId)}>{part.value}</button>)}</p>;
 }
 
 function SectionTitle({ icon, title, copy }: { readonly icon: JSX.Element; readonly title: string; readonly copy: string }): JSX.Element {

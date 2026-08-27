@@ -6,6 +6,7 @@ import type {
   AiConversationResponse,
   DatabaseAccessStatus,
   DatabaseResetResult,
+  DemoCredentialReveal,
   DemoCredentialSummary,
   DemoOfflineSearchResult,
   DemoSaveReceipt,
@@ -830,6 +831,11 @@ async function searchDemoSources(query: string): Promise<DemoOfflineSearchResult
 async function revealDemoSource(sourceId: string): Promise<DemoSourceReveal> {
   if (window.brainBuddy) return window.brainBuddy.revealDemoSource({ sourceId });
   return postJson<DemoSourceReveal>("/api/database/reveal", { sourceId });
+}
+
+export async function revealCredential(credentialId: string): Promise<DemoCredentialReveal> {
+  if (window.brainBuddy) return window.brainBuddy.revealCredential({ credentialId });
+  return postJson<DemoCredentialReveal>("/api/database/reveal-credential", { credentialId });
 }
 
 async function prepareAiConversation(text: string): Promise<AiConversationDraft> {

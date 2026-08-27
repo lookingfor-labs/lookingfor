@@ -30,8 +30,10 @@ describe("LocalBackend", () => {
     expect(reopened.search("Figma").sources.map(({ sourceId }) => sourceId)).toContain(receipt.sourceId);
     expect(reopened.memories.list().map(({ path }) => path)).toEqual(["memories/figma.md"]);
     expect(() => reopened.reveal(receipt.sourceId)).toThrow("DATABASE_LOCKED");
+    expect(() => reopened.revealCredential(receipt.credentialIds[0]!)).toThrow("DATABASE_LOCKED");
     reopened.access.unlock("persistent-password");
     expect(reopened.reveal(receipt.sourceId).originalContent).toBe(original);
+    expect(reopened.revealCredential(receipt.credentialIds[0]!).value).toBe("sk-local-backend-secret-123456");
     reopened.close();
   });
 

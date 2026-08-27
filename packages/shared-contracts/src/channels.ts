@@ -3,6 +3,7 @@ export const PREVIEW_PROTECTION_CHANNEL = "privacy:preview-protection";
 export const SAVE_DEMO_CANDIDATE_CHANNEL = "memory:save-demo-candidate";
 export const SEARCH_DEMO_SOURCES_CHANNEL = "source:search-demo-sources";
 export const REVEAL_DEMO_SOURCE_CHANNEL = "memory:reveal-demo-source";
+export const REVEAL_CREDENTIAL_CHANNEL = "database:reveal-credential";
 export const PREPARE_AI_CONVERSATION_CHANNEL = "ai:prepare-conversation";
 export const START_AI_CONVERSATION_CHANNEL = "ai:start-conversation";
 export const CANCEL_AI_CONVERSATION_CHANNEL = "ai:cancel-conversation";

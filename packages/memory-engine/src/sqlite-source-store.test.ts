@@ -70,6 +70,12 @@ describe("SqliteSourceStore", () => {
       kind: "conversation",
       originalContent: `原始对话 ${secret}`
     });
+    expect(store.revealCredential(firstCredentialId)).toMatchObject({
+      credentialId: firstCredentialId,
+      entityType: "api_key",
+      value: secret,
+      sourceIds: [captureReceipt.sourceId, conversationReceipt.sourceId]
+    });
     store.close();
 
     const database = new DatabaseSync(databasePath);

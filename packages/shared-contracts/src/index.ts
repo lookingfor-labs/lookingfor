@@ -6,6 +6,7 @@ import type {
   DatabaseResetResult,
   AiConversationDraft,
   AiConversationEvent,
+  DemoCredentialReveal,
   DemoSourceReveal,
   PrivacyAnalysis,
   ProtectionPreview,
@@ -50,6 +51,8 @@ export const SearchDemoSourcesRequestSchema = z.object({
 export const RevealDemoSourceRequestSchema = z.object({
   sourceId: z.string().regex(/^SOURCE_(?:DEMO_\d{3,}|[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/iu)
 });
+
+export const RevealCredentialRequestSchema = z.object({ credentialId: z.string().uuid() });
 
 export const PrepareAiConversationRequestSchema = z.object({
   text: z.string().trim().min(1).max(2_000)
@@ -101,6 +104,7 @@ export const ConfigureLocalStorageSettingsRequestSchema = z.object({
 
 export type SearchDemoSourcesRequest = z.infer<typeof SearchDemoSourcesRequestSchema>;
 export type RevealDemoSourceRequest = z.infer<typeof RevealDemoSourceRequestSchema>;
+export type RevealCredentialRequest = z.infer<typeof RevealCredentialRequestSchema>;
 export const MemoryOperationSchema = z.discriminatedUnion("operation", [
   z.object({
     operation: z.literal("create"),
@@ -151,6 +155,7 @@ export interface BrainBuddyApi {
   saveDemoCandidate(request: ProtectionRequest): Promise<DemoSaveReceipt>;
   searchDemoSources(request: SearchDemoSourcesRequest): Promise<DemoOfflineSearchResult>;
   revealDemoSource(request: RevealDemoSourceRequest): Promise<DemoSourceReveal>;
+  revealCredential(request: RevealCredentialRequest): Promise<DemoCredentialReveal>;
   prepareAiConversation(request: PrepareAiConversationRequest): Promise<AiConversationDraft>;
   startAiConversation(request: StartAiConversationRequest): Promise<{ readonly runId: string }>;
   cancelAiConversation(request: CancelAiConversationRequest): Promise<void>;

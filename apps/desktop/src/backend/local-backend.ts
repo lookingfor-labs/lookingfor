@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { ProtectedRecordReader } from "@brainbuddy/agent-runtime";
 import type {
   DatabaseResetResult,
+  DemoCredentialReveal,
   DemoOfflineSearchResult,
   DemoSaveReceipt,
   DemoSourceReveal,
@@ -97,6 +98,11 @@ export class LocalBackend {
   reveal(sourceId: string): DemoSourceReveal {
     this.access.assertUnlocked();
     return this.#sources.revealSource(sourceId);
+  }
+
+  revealCredential(credentialId: string): DemoCredentialReveal {
+    this.access.assertUnlocked();
+    return this.#sources.revealCredential(credentialId);
   }
 
   resetDatabase(): DatabaseResetResult {

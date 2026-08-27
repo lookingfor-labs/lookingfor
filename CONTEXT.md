@@ -71,3 +71,7 @@ _Avoid_: Delete, generic masking
 **Source Reveal（查看原始记录）**:
 An explicit user action that retrieves and temporarily displays the Original Input of a Source Record.
 _Avoid_: Automatic restoration, AI lookup
+
+**Credential Reveal（查看凭据明文）**:
+An explicit user action that retrieves and temporarily displays one Credential value after the local database access check. The value is cleared when the user closes it, leaves the page, or starts another Run, and it is never added to AI context.
+_Avoid_: Agent credential tool, automatic reveal, memory substitution
