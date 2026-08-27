@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createFauxCore, fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
+import { createFauxCore, fauxAssistantMessage, fauxToolCall as coreFauxToolCall } from "@earendil-works/pi-ai";
 import { DemoMemorySession } from "@brainbuddy/memory-engine/memory";
 import {
   createAgentRuntime,
@@ -12,7 +12,105 @@ import {
   type ProtectedRecordReader
 } from "./index";
 
+function fauxToolCall(...args: Parameters<typeof coreFauxToolCall>): ReturnType<typeof coreFauxToolCall> {
+  const [name, input, options] = args;
+  if (name !== "brainbuddy_finish") return coreFauxToolCall(name, input, options);
+  const finish = input as Record<string, unknown>;
+  const references = Array.isArray(finish.references) ? finish.references as Array<{ kind?: string }> : [];
+  return coreFauxToolCall(name, {
+    ...finish,
+    memoryDecision: finish.memoryDecision ?? {
+      action: references.some(({ kind }) => kind === "memory") ? "written" : "not_needed",
+      reason: "Scripted test decision"
+    }
+  }, options);
+}
+
 describe("AgentRuntime", () => {
+  it("separates required writes, read-only queries, and model-chosen Memory decisions", async () => {
+    const faux = createFauxCore({ tokensPerSecond: 0 });
+    faux.setResponses([fauxAssistantMessage(fauxToolCall("brainbuddy_finish", {
+      message: "已了解这项临时安排。",
+      references: [{ kind: "source", id: "SOURCE_QUERY" }],
+      memoryDecision: { action: "not_needed", reason: "这只是临时上下文，不值得写入长期记忆。" }
+    }, { id: "model-choice-finish" }), { stopReason: "toolUse" })]);
+    const runtime = createAgentRuntime({
+      model: faux.getModel(),
+      streamFn: faux.streamSimple,
+      records: protectedRecords(),
+      memories: new DemoMemorySession()
+    });
+
+    const writeDraft = runtime.prepare({
+      message: "记录一下 agentflow 的密码是 [CREDENTIAL:CREDENTIAL_FIGMA]",
+      conversationSourceId: "SOURCE_QUERY",
+      writePolicy: "auto_apply"
+    });
+    const queryDraft = runtime.prepare({
+      message: "帮我查找 Figma 登录信息",
+      conversationSourceId: "SOURCE_QUERY",
+      writePolicy: "auto_apply"
+    });
+    const modelChoiceDraft = runtime.prepare({
+      message: "我下周五要去体检",
+      conversationSourceId: "SOURCE_QUERY",
+      writePolicy: "auto_apply"
+    });
+
+    expect(writeDraft.memoryIntent.type).toBe("write_required");
+    expect(queryDraft.memoryIntent.type).toBe("read_only");
+    expect(modelChoiceDraft.memoryIntent.type).toBe("model_choice");
+    await expect(runtime.start(modelChoiceDraft.draftId, () => undefined).done).resolves.toMatchObject({
+      status: "completed",
+      memoryDecision: { action: "not_needed" }
+    });
+  });
+
+  it("prevents a pure query from changing Memory even when the model requests a write", async () => {
+    const memories = new DemoMemorySession();
+    const faux = createFauxCore({ tokensPerSecond: 0 });
+    faux.setResponses([
+      fauxAssistantMessage(fauxToolCall("write_memory", {
+        operation: "create",
+        path: "memories/query.md",
+        content: "A query must not create Memory.",
+        reason: "Incorrectly persist a query"
+      }, { id: "query-write" }), { stopReason: "toolUse" }),
+      fauxAssistantMessage(fauxToolCall("brainbuddy_finish", {
+        message: "没有找到匹配信息。",
+        references: [
+          { kind: "source", id: "SOURCE_QUERY" },
+          { kind: "credential", id: "CREDENTIAL_FIGMA" }
+        ],
+        memoryDecision: { action: "not_needed", reason: "本轮是纯查询。" }
+      }, { id: "query-finish" }), { stopReason: "toolUse" })
+    ]);
+    const runtime = createAgentRuntime({
+      model: faux.getModel(),
+      streamFn: faux.streamSimple,
+      records: protectedRecords(),
+      memories
+    });
+    const draft = runtime.prepare({
+      message: "帮我查找与 [CREDENTIAL:CREDENTIAL_FIGMA] 有关的 Figma 登录信息",
+      conversationSourceId: "SOURCE_QUERY",
+      writePolicy: "auto_apply"
+    });
+    const errors: unknown[] = [];
+
+    const result = await runtime.start(draft.draftId, (event) => {
+      if (event.type === "tool_result" && event.isError) errors.push(event.result);
+    }).done;
+
+    expect(result).toMatchObject({ status: "completed", memoryDecision: { action: "not_needed" } });
+    expect(memories.list()).toEqual([]);
+    expect(errors).toContainEqual({
+      code: "MEMORY_WRITE_NOT_ALLOWED",
+      message: "A read-only query must not change Memory",
+      retryable: true
+    });
+  });
+
   it("persists one safe JSONL audit record for a complete Run", async () => {
     const directory = mkdtempSync(join(tmpdir(), "brainbuddy-agent-runs-"));
     try {
@@ -335,7 +433,8 @@ describe("AgentRuntime", () => {
       }, { id: "denied-write" }), { stopReason: "toolUse" }),
       fauxAssistantMessage(fauxToolCall("brainbuddy_finish", {
         message: "The Figma password was saved.",
-        references: [{ kind: "source", id: "SOURCE_QUERY" }]
+        references: [{ kind: "source", id: "SOURCE_QUERY" }],
+        memoryDecision: { action: "denied", reason: "The user denied the prepared Memory write." }
       }, { id: "finish-after-denial" }), { stopReason: "toolUse" })
     ]);
     const runtime = createAgentRuntime({ model: faux.getModel(), streamFn: faux.streamSimple, records: protectedRecords(), memories });

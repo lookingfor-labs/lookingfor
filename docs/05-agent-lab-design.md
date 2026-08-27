@@ -263,10 +263,14 @@ interface BrainBuddyFinishInput {
     kind: "source" | "credential" | "memory";
     id: string;
   }[];
+  memoryDecision: {
+    action: "not_needed" | "written" | "denied";
+    reason: string;
+  };
 }
 ```
 
-运行时拒绝本次 Run 未见过的引用。成功执行后结束 Agent 循环。
+运行时拒绝本次 Run 未见过的引用，并校验 `memoryDecision` 与本轮真实写入结果一致。明确写入意图没有完成写入或拒绝审批时不能结束；纯查询不允许调用写入工具；其他可能长期有用的计划、偏好和事实由模型决定是否写入，但必须通过 `memoryDecision` 留下可审计原因。成功执行后结束 Agent 循环。
 
 `brainbuddy_finish` 必须是所在 AssistantMessage 中唯一的 tool call。只要同一消息还包含其他工具，运行时就在 preflight 阶段拒绝整个 batch，不依赖 pi-agent-core 的混合 batch termination 行为。每个 Run 最多允许两次 finish 尝试；成功后由 Agent Runtime 直接进入 `Completed`，不再发起模型请求。
 
@@ -371,13 +375,13 @@ pi-agent-core 的 `turn` 是一次模型请求及其后续工具执行。本文�
 
 首版限制：
 
-- `toolBatchCount <= 3`；
-- `toolCallCount <= 8`；
-- `modelRequestCount <= 5`；
+- `toolBatchCount <= 6`；
+- `toolCallCount <= 16`；
+- `modelRequestCount <= 10`；
 - `finishAttemptCount <= 2`；
 - `pendingApprovalCount <= 1`；
 - 写入工具顺序执行；
-- 第 3 个 tool batch 结束后，只允许模型单独调用 `brainbuddy_finish`；
+- 第 6 个 tool batch 结束后，只允许模型单独调用 `brainbuddy_finish`；
 - 未注册工具、越界路径、无效参数和未知引用全部返回结构化失败，不执行副作用。
 
 所有计数由 Agent Runtime 在模型请求和工具 preflight 前执行硬校验。达到 `modelRequestCount` 或 `finishAttemptCount` 上限后直接结束为预算失败，不能通过向模型追加错误消息继续形成无界循环。
@@ -633,4 +637,4 @@ interface SafeToolError {
 7. DeepSeek function schema 顶层统一为 object，create/edit 的条件约束由 Runtime 二次校验；
 8. 创建和编辑产生的 Revision 都可撤销；撤销创建会删除对应 Memory 文件。
 
-当前实现验证基线：仓库测试 52 项通过，所有 workspace 类型检查通过，桌面生产构建通过，真实 DeepSeek 只读 Agent Run 完成并产生 `brainbuddy_finish`。写入审批与自动撤销通过伪模型端到端测试，保留给页面手动验收。
+当前实现验证基线：仓库测试 82 项通过，所有 workspace 类型检查通过，桌面生产构建通过，真实 DeepSeek 只读 Agent Run 完成并产生 `brainbuddy_finish`。写入审批与自动撤销通过伪模型端到端测试，保留给页面手动验收。

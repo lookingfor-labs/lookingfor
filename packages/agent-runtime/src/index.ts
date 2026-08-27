@@ -32,7 +32,11 @@ const finishSchema = Type.Object({
   references: Type.Array(Type.Object({
     kind: Type.Union([Type.Literal("source"), Type.Literal("credential"), Type.Literal("memory")]),
     id: Type.String({ minLength: 1, maxLength: 1_000 })
-  }), { maxItems: 50 })
+  }), { maxItems: 50 }),
+  memoryDecision: Type.Object({
+    action: Type.Union([Type.Literal("not_needed"), Type.Literal("written"), Type.Literal("denied")]),
+    reason: Type.String({ minLength: 1, maxLength: 1_000 })
+  })
 });
 const memoryEditSchema = Type.Union([
   Type.Object({ type: Type.Literal("replace"), oldText: Type.String(), newText: Type.String() }),
@@ -72,9 +76,9 @@ export interface PrepareAgentRunInput {
 }
 
 export type MemoryIntent =
-  | { readonly type: "no_write_required" }
+  | { readonly type: "read_only" }
   | {
-      readonly type: "durable_fact";
+      readonly type: "model_choice" | "write_required";
       readonly requiredSourceId: string;
       readonly requiredCredentialIds: readonly string[];
     };
@@ -97,11 +101,17 @@ export type AgentReference = {
   readonly id: string;
 };
 
+export interface AgentMemoryDecision {
+  readonly action: "not_needed" | "written" | "denied";
+  readonly reason: string;
+}
+
 export type AgentRunResult =
   | {
       readonly status: "completed";
       readonly message: string;
       readonly references: readonly AgentReference[];
+      readonly memoryDecision: AgentMemoryDecision;
       readonly budgets: AgentRunBudgets;
     }
   | {
@@ -162,6 +172,8 @@ export interface SafeToolError {
     | "INVALID_PATH"
     | "INVALID_WRITE_REQUEST"
     | "LIMIT_EXCEEDED"
+    | "MEMORY_DECISION_MISMATCH"
+    | "MEMORY_WRITE_NOT_ALLOWED"
     | "MEMORY_WRITE_REQUIRED"
     | "MEMORY_NOT_FOUND"
     | "REFERENCE_NOT_SEEN"
@@ -245,7 +257,11 @@ interface RunState {
   readonly budgets: MutableBudgets;
   readonly emit: (event: AgentRuntimeEvent) => void;
   agent?: Agent;
-  finish?: { readonly message: string; readonly references: readonly AgentReference[] };
+  finish?: {
+    readonly message: string;
+    readonly references: readonly AgentReference[];
+    readonly memoryDecision: AgentMemoryDecision;
+  };
   cancelled: boolean;
 }
 
@@ -301,27 +317,40 @@ const systemPrompt = `你是 BrainBuddy 的受控本地 Agent。
 使用已注册工具搜索受保护的本地记录与 Memory 文件；你无法读取 Source 原文或 Credential 明文。
 你收到的是经过 BrainBuddy 本地保护层处理后的用户消息；其中部分原始值可能已经替换为 [CREDENTIAL:<id>]，它是原始值的有效不透明引用。
 不要读取、猜测、恢复或重新创建 Credential 明文。保存长期信息时，必须把已有 [CREDENTIAL:<id>] 原样写入 Memory，并同时保留本轮 [SOURCE:<id>] 以便用户追溯原始记录。
-用户陈述账号、密码、Key、Token 等可复用事实，或明确要求记住、记录、保存时，必须先用 write_memory 创建或更新 Memory，再结束 Run；不要求用户额外说“记住”。
-用户只是在查找、查询或询问信息时，不得仅因消息中出现 Credential 或 Source 引用而新增 Memory。
+先判断本轮的 Memory 行为：明确要求记住、记录、保存、写入或更新，以及陈述账号、密码、Key、Token 等可复用事实时必须写入；纯查找、查询、解释或总结时不得写入；其他可能长期有用的计划、偏好或事实由你判断是否值得写入。
+执行明确写入任务时，当前 [SOURCE:<id>] 已经可见，不要搜索当前 Source；最多先调用一次 search_memories 定位主题。找到现有文件时先 read_memory 再精确编辑；找不到时直接创建语义清晰的 memories/<topic>.md。
+基于本轮明确持久化事实的写入必须保留本轮 [SOURCE:<id>]，并原样保留消息中的全部 [CREDENTIAL:<id>]；不得仅因消息中出现引用就把纯查询变成写入。
 如果消息中是邮箱原文，它就是 AI 可见的普通账号信息；只有 [CREDENTIAL:<id>] 才能描述为凭据，绝不能把邮箱自行声称为凭据。
 最终回复只陈述本轮已完成的结果，不得提出问题、邀请继续回复，或声称还可以继续执行当前 Run。
-你必须在完成任务后调用 brainbuddy_finish，并且它必须是该 AssistantMessage 中唯一的工具调用。
+你必须在完成任务后调用 brainbuddy_finish，并明确提交 memoryDecision：未写入用 not_needed、成功写入用 written、用户拒绝审批用 denied，同时给出简短原因。它必须是该 AssistantMessage 中唯一的工具调用。
 最终回复只能引用本 Run 已见过的 ID 与 Memory Path。不要只输出普通文本后结束。`;
 
 export function requiresDurableMemory(message: string): boolean {
-  if (/(?:记住|记录(?:一下)?|保存)|(?:账号|账户|邮箱|密码|(?:api[ _-]?)?key|token|密钥)\s*(?:是|为|有(?!什么|哪些|没有)|包括|包含)/iu.test(message)) return true;
-  const containsCredentialReference = /\[CREDENTIAL:[^\]\r\n]+\]/u.test(message);
-  const isQuery = /(?:查找|查询|搜索|找(?:到|一下)?|查看|有没有|有哪些|是什么|哪里|哪一个|哪个)/u.test(message);
-  return containsCredentialReference && !isQuery;
+  return classifyMemoryIntent(message) === "write_required";
 }
 
 function memoryIntentFor(message: string, conversationSourceId: string): MemoryIntent {
-  if (!requiresDurableMemory(message)) return { type: "no_write_required" };
+  const type = classifyMemoryIntent(message);
+  if (type === "read_only") return { type };
   return {
-    type: "durable_fact",
+    type,
     requiredSourceId: conversationSourceId,
-    requiredCredentialIds: [...new Set([...message.matchAll(/\[CREDENTIAL:([^\]\r\n]+)\]/gu)].map((match) => match[1]!))]
+    requiredCredentialIds: credentialReferencesIn(message)
   };
+}
+
+function credentialReferencesIn(message: string): string[] {
+  return [...new Set([...message.matchAll(/\[CREDENTIAL:([^\]\r\n]+)\]/gu)].map((match) => match[1]!))];
+}
+
+function classifyMemoryIntent(message: string): MemoryIntent["type"] {
+  const explicitWrite = /(?:记住|记录(?:一下)?|保存|写入(?:记忆)?|更新(?:一下)?(?:本地)?记忆)/iu.test(message);
+  if (explicitWrite) return "write_required";
+  const explicitQuery = /(?:查找|查询|搜索|找(?:到|一下)?|查看|有没有|有哪些|是什么|哪里|哪一个|哪个|解释|总结)/u.test(message);
+  if (explicitQuery) return "read_only";
+  const reusableProtectedFact = /(?:账号|账户|邮箱|密码|(?:api[ _-]?)?key|token|密钥)\s*(?:是|为|有(?!什么|哪些|没有)|包括|包含)/iu.test(message);
+  const containsCredentialReference = /\[CREDENTIAL:[^\]\r\n]+\]/u.test(message);
+  return reusableProtectedFact || containsCredentialReference ? "write_required" : "model_choice";
 }
 
 export function createAgentRuntime(options: CreateAgentRuntimeOptions): AgentRuntime {
@@ -339,10 +368,8 @@ export function createAgentRuntime(options: CreateAgentRuntimeOptions): AgentRun
         throw new Error("REVISION_STORE_UNAVAILABLE: Automatic Memory writes require Revisions");
       }
       const memoryIntent = memoryIntentFor(input.message, input.conversationSourceId);
-      if (memoryIntent.type === "durable_fact") {
-        const unknownCredentialId = memoryIntent.requiredCredentialIds.find((id) => !options.records.credentialExists(id));
-        if (unknownCredentialId) throw new Error("Conversation contains an unknown Credential reference");
-      }
+      const unknownCredentialId = credentialReferencesIn(input.message).find((id) => !options.records.credentialExists(id));
+      if (unknownCredentialId) throw new Error("Conversation contains an unknown Credential reference");
       const draft = Object.freeze({ ...input, memoryIntent, draftId: idFactory(), createdAt: now().toISOString() });
       drafts.set(draft.draftId, draft);
       return draft;
@@ -374,7 +401,7 @@ export function createAgentRuntime(options: CreateAgentRuntimeOptions): AgentRun
         runId,
         draft,
         seenSourceIds: new Set([draft.conversationSourceId]),
-        seenCredentialIds: new Set(draft.memoryIntent.type === "durable_fact" ? draft.memoryIntent.requiredCredentialIds : []),
+        seenCredentialIds: new Set(credentialReferencesIn(draft.message)),
         seenMemoryPaths: new Set(),
         countedBatches: new Set(),
         memoryWriteOutcome: "none",
@@ -474,7 +501,7 @@ function createTools(state: RunState, options: CreateAgentRuntimeOptions, approv
   const searchLocalRecords: AgentTool<typeof searchSchema> = {
     name: "search_local_records",
     label: "Search protected local records",
-    description: "Search protected Source records and masked Credential metadata.",
+    description: "Search protected Source records and masked Credential metadata. Do not use this to rediscover the current conversation Source, which is already visible.",
     parameters: searchSchema,
     executionMode: "sequential",
     async execute(_toolCallId, params) {
@@ -493,7 +520,7 @@ function createTools(state: RunState, options: CreateAgentRuntimeOptions, approv
   const searchMemories: AgentTool<typeof searchSchema> = {
     name: "search_memories",
     label: "Search Memory files",
-    description: "Search AI-readable local Memory files by path or content.",
+    description: "Search AI-readable local Memory files by path or content. For an explicit write task, search at most once before choosing whether to create or update.",
     parameters: searchSchema,
     executionMode: "sequential",
     async execute(_toolCallId, params) {
@@ -522,10 +549,13 @@ function createTools(state: RunState, options: CreateAgentRuntimeOptions, approv
   const writeMemory: AgentTool<typeof writeMemorySchema> = {
     name: "write_memory",
     label: "Write a Memory file",
-    description: "Create or exactly edit one controlled Memory file. Preserve every existing [CREDENTIAL:<id>] as an opaque reference and include the current [SOURCE:<id>] for durable facts. Never recover or replace Credential plaintext. The active Run policy controls approval.",
+    description: "Create or exactly edit one controlled memories/<topic>.md file. Preserve every existing [CREDENTIAL:<id>] as an opaque reference and include the current [SOURCE:<id>] for durable facts. Never recover or replace Credential plaintext. The active Run policy controls approval.",
     parameters: writeMemorySchema,
     executionMode: "sequential",
     async execute(toolCallId, params, signal) {
+      if (state.draft.memoryIntent.type === "read_only") {
+        throw new Error("MEMORY_WRITE_NOT_ALLOWED: This is a read-only query and must not change Memory");
+      }
       const request = normalizeMemoryWrite(params);
       const prepared = options.memories.prepare(request);
       validatePreparedReferences(state, options, prepared);
@@ -562,21 +592,23 @@ function createTools(state: RunState, options: CreateAgentRuntimeOptions, approv
   const finish: AgentTool<typeof finishSchema> = {
     name: "brainbuddy_finish",
     label: "Finish the Agent Run",
-    description: "Return the final response and references. This must be the only tool call in the AssistantMessage.",
+    description: "Return the final response, references, and auditable Memory decision. This must be the only tool call in the AssistantMessage.",
     parameters: finishSchema,
     executionMode: "sequential",
     async execute(_toolCallId, params) {
-      if (state.draft.memoryIntent.type === "durable_fact"
+      if (state.draft.memoryIntent.type === "write_required"
         && state.memoryWriteOutcome !== "applied"
         && state.memoryWriteOutcome !== "denied") {
         throw new Error("MEMORY_WRITE_REQUIRED: This message contains a durable fact that must be handled with write_memory before finishing");
       }
+      validateMemoryDecision(state, params.memoryDecision);
       const references = params.references as AgentReference[];
       const unseen = references.find((reference) => !referenceWasSeen(state, reference));
       if (unseen) throw new Error(`REFERENCE_NOT_SEEN: ${unseen.kind} reference was not seen in this Run`);
       state.finish = {
         message: state.memoryWriteOutcome === "denied" ? "Memory 写入未获批准，本轮没有修改本地记忆。" : params.message,
-        references
+        references,
+        memoryDecision: params.memoryDecision
       };
       return { ...safeToolResult({ accepted: true }), terminate: true };
     }
@@ -598,10 +630,21 @@ function validatePreparedReferences(state: RunState, options: CreateAgentRuntime
 
 function validateRequiredMemoryReferences(state: RunState, prepared: PreparedMemoryWrite): void {
   const intent = state.draft.memoryIntent;
-  if (intent.type !== "durable_fact") return;
+  if (intent.type !== "write_required") return;
   if (!prepared.sourceIds.includes(intent.requiredSourceId)
     || intent.requiredCredentialIds.some((id) => !prepared.credentialIds.includes(id))) {
     throw new Error("REQUIRED_REFERENCE_MISSING: A protected reference required by this durable fact is missing from the Memory write");
+  }
+}
+
+function validateMemoryDecision(state: RunState, decision: AgentMemoryDecision): void {
+  const expected = state.memoryWriteOutcome === "applied"
+    ? "written"
+    : state.memoryWriteOutcome === "denied"
+      ? "denied"
+      : "not_needed";
+  if (decision.action !== expected) {
+    throw new Error(`MEMORY_DECISION_MISMATCH: Memory decision must be ${expected}`);
   }
 }
 
@@ -675,6 +718,8 @@ const SAFE_ERROR_CODES = new Set<SafeToolError["code"]>([
   "INVALID_PATH",
   "INVALID_WRITE_REQUEST",
   "LIMIT_EXCEEDED",
+  "MEMORY_DECISION_MISMATCH",
+  "MEMORY_WRITE_NOT_ALLOWED",
   "MEMORY_WRITE_REQUIRED",
   "MEMORY_NOT_FOUND",
   "REFERENCE_NOT_SEEN",
@@ -704,6 +749,8 @@ function safeErrorMessage(code: Exclude<SafeToolError["code"], "TOOL_FAILED">): 
     INVALID_PATH: "The Memory Path is not allowed",
     INVALID_WRITE_REQUEST: "The Memory write request is incomplete",
     LIMIT_EXCEEDED: "The Agent Run budget was exceeded",
+    MEMORY_DECISION_MISMATCH: "The reported Memory decision does not match the executed Memory action",
+    MEMORY_WRITE_NOT_ALLOWED: "A read-only query must not change Memory",
     MEMORY_WRITE_REQUIRED: "A durable fact must be handled with write_memory before finishing",
     MEMORY_NOT_FOUND: "The requested Memory was not found",
     REFERENCE_NOT_SEEN: "The reference was not seen in this Run",
