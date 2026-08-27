@@ -39,7 +39,7 @@ import type {
   ProtectionPolicy,
   ProtectionPreview
 } from "@brainbuddy/domain";
-import type { AgentReference, AgentRuntimeEvent } from "@brainbuddy/agent-runtime";
+import type { AgentReference, AgentRunDraft, AgentRuntimeEvent } from "@brainbuddy/agent-runtime";
 import type { ProtectionRequest } from "@brainbuddy/shared-contracts";
 import {
   analyzeInput,
@@ -75,6 +75,18 @@ const navigation = [
 ] as const;
 
 const querySuggestions = ["最近保存的信息", "Figma", "设计账号", "AgentFlow", "GitHub"] as const;
+
+export async function prepareMvpAgentRun(options: {
+  readonly text: string;
+  readonly writePolicy: MemoryWritePolicy;
+  readonly decisions: ProtectionRequest["decisions"];
+  readonly onSaved: () => void;
+  readonly prepare?: typeof prepareAgentRun;
+}): Promise<AgentRunDraft> {
+  const draft = await (options.prepare ?? prepareAgentRun)(options.text, options.writePolicy, options.decisions);
+  options.onSaved();
+  return draft;
+}
 
 export function MvpApp({ onOpenDemo }: { readonly onOpenDemo: () => void }): JSX.Element {
   const [page, setPage] = useState<MvpPage>("home");
@@ -217,11 +229,12 @@ function HomePage({ memoryWritePolicy, onSaved }: { readonly memoryWritePolicy: 
     setApproval(undefined);
     setError(undefined);
     try {
-      const draft = await prepareAgentRun(
-        question,
-        memoryWritePolicy,
-        buildQuestionProtectionDecisions(questionAnalysis, questionDecisions, questionCredentialIds)
-      );
+      const draft = await prepareMvpAgentRun({
+        text: question,
+        writePolicy: memoryWritePolicy,
+        decisions: buildQuestionProtectionDecisions(questionAnalysis, questionDecisions, questionCredentialIds),
+        onSaved
+      });
       await streamAgentRun(draft.draftId, (event: AgentRuntimeEvent) => {
         setRunId(event.runId);
         if (event.type === "approval_required") setApproval(event.prepared);
