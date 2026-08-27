@@ -49,7 +49,11 @@ describe("browser database access", () => {
 
   it("uses the backend interface for editable local storage paths", async () => {
     vi.stubGlobal("window", { brainBuddy: undefined });
-    const settings = { memoryDirectory: "/tmp/brainbuddy/memories", databaseDirectory: "/tmp/brainbuddy/database" };
+    const settings = {
+      memoryDirectory: "/tmp/brainbuddy/memories",
+      databaseDirectory: "/tmp/brainbuddy/database",
+      memoryWritePolicy: "auto_apply" as const
+    };
     const fetchMock = vi.fn().mockImplementation(async () => new Response(JSON.stringify(settings), {
       status: 200,
       headers: { "content-type": "application/json" }

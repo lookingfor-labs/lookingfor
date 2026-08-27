@@ -7,6 +7,7 @@ import { DemoMemorySession } from "@brainbuddy/memory-engine/memory";
 import {
   createAgentRuntime,
   createFileAgentRunRecorder,
+  requiresDurableMemory,
   type AgentRuntimeEvent,
   type ProtectedRecordReader
 } from "./index";
@@ -188,6 +189,46 @@ describe("AgentRuntime", () => {
     expect(memories.list()[0]?.content).toBe("AB");
     expect(events).toContain("auto_applied");
     expect(events).not.toContain("approval_required");
+  });
+
+  it("requires a Memory write for a newly stated account fact before finishing", async () => {
+    expect(requiresDurableMemory("figma 的账号有 aaa@qq.com 和 vvv@qq.com")).toBe(true);
+    expect(requiresDurableMemory("帮我查找 GitHub 账号")).toBe(false);
+    const memories = new DemoMemorySession();
+    const faux = createFauxCore({ tokensPerSecond: 0 });
+    faux.setResponses([
+      fauxAssistantMessage(fauxToolCall("brainbuddy_finish", {
+        message: "Account received without writing Memory.",
+        references: [{ kind: "source", id: "SOURCE_QUERY" }]
+      }, { id: "premature-finish" }), { stopReason: "toolUse" }),
+      fauxAssistantMessage(fauxToolCall("write_memory", {
+        operation: "create",
+        path: "memories/accounts.md",
+        content: "Figma accounts: aaa@qq.com, vvv@qq.com\n\nSource: [SOURCE:SOURCE_QUERY]",
+        reason: "Remember reusable Figma accounts"
+      }, { id: "required-write" }), { stopReason: "toolUse" }),
+      fauxAssistantMessage(fauxToolCall("brainbuddy_finish", {
+        message: "Figma accounts were written to memories/accounts.md.",
+        references: [
+          { kind: "source", id: "SOURCE_QUERY" },
+          { kind: "memory", id: "memories/accounts.md" }
+        ]
+      }, { id: "finish-after-write" }), { stopReason: "toolUse" })
+    ]);
+    const runtime = createAgentRuntime({ model: faux.getModel(), streamFn: faux.streamSimple, records: protectedRecords(), memories });
+    const draft = runtime.prepare({
+      message: "figma 的账号有 aaa@qq.com 和 vvv@qq.com",
+      conversationSourceId: "SOURCE_QUERY",
+      writePolicy: "auto_apply"
+    });
+
+    await expect(runtime.start(draft.draftId, () => undefined).done).resolves.toMatchObject({
+      status: "completed",
+      budgets: { finishAttemptCount: 2 }
+    });
+    expect(memories.list()).toEqual([
+      expect.objectContaining({ path: "memories/accounts.md", content: expect.stringContaining("aaa@qq.com") })
+    ]);
   });
 
   it("cancels an approval wait and expires a late decision", async () => {

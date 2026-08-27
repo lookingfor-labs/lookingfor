@@ -39,6 +39,7 @@ body.mvp-route { min-width: 0; background: #f6f7fb; }
 .mvp-sidebar-foot > button:hover { border-color: #b9b3ee; color: var(--mvp-accent-strong); }
 .mvp-sidebar-foot > button:active { transform: scale(.98); }
 .mvp-main { min-width: 0; padding: 30px 36px 52px; }
+.mvp-main > [hidden] { display: none; }
 .mvp-page { width: min(1160px, 100%); margin: 0 auto; }
 .mvp-page-head { margin: 0 0 24px; }
 .mvp-page-head h1 { margin: 0 0 7px; color: var(--mvp-text); font: 800 34px/1.2 "Segoe UI", "PingFang SC", sans-serif; letter-spacing: -.025em; text-wrap: balance; }
@@ -187,6 +188,7 @@ body.mvp-route { min-width: 0; background: #f6f7fb; }
 .mvp-security-settings > div:last-child { min-width: 0; }
 .mvp-policy-row { display: flex; align-items: center; justify-content: space-between; gap: 18px; min-height: 64px; border-top: 1px solid var(--mvp-line); padding: 12px 0; color: var(--mvp-success); }
 .mvp-policy-row strong, .mvp-policy-row span { display: block; }.mvp-policy-row strong { color: #3f485c; font-size: 12px; }.mvp-policy-row span { margin-top: 4px; color: var(--mvp-muted); font-size: 10px; }
+.mvp-policy-control select { min-height: 38px; flex: 0 0 auto; border: 1px solid #d8dbe4; border-radius: 10px; background: var(--mvp-panel); padding: 0 10px; color: #4b5468; font-size: 10px; font-weight: 700; }
 .mvp-setting-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
 .mvp-status-pill { display: inline-flex; align-items: center; min-height: 28px; flex: 0 0 auto; border-radius: 999px; padding: 0 10px; font-size: 9px; font-weight: 800; white-space: nowrap; }
 .mvp-status-pill.unlocked { background: var(--mvp-success-soft); color: var(--mvp-success); }

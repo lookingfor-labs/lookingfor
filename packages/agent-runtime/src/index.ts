@@ -153,6 +153,7 @@ export interface SafeToolError {
     | "INVALID_PATH"
     | "INVALID_WRITE_REQUEST"
     | "LIMIT_EXCEEDED"
+    | "MEMORY_WRITE_REQUIRED"
     | "MEMORY_NOT_FOUND"
     | "REFERENCE_NOT_SEEN"
     | "RUN_CANCELLED"
@@ -228,6 +229,8 @@ interface RunState {
   readonly seenCredentialIds: Set<string>;
   readonly seenMemoryPaths: Set<string>;
   readonly countedBatches: Set<string>;
+  readonly requiresMemoryWrite: boolean;
+  memoryWriteHandled: boolean;
   readonly budgets: MutableBudgets;
   readonly emit: (event: AgentRuntimeEvent) => void;
   agent?: Agent;
@@ -285,8 +288,15 @@ class ApprovalGate {
 
 const systemPrompt = `你是 BrainBuddy 的受控本地 Agent。
 使用已注册工具搜索受保护的本地记录与 Memory 文件；你无法读取 Source 原文或 Credential 明文。
+用户陈述账号、密码、Key、Token 等可复用事实，或明确要求记住、记录、保存时，必须先用 write_memory 创建或更新 Memory，再结束 Run；不要求用户额外说“记住”。
+如果消息中是邮箱原文，它就是 AI 可见的普通账号信息；只有 [CREDENTIAL:<id>] 才能描述为凭据，绝不能把邮箱自行声称为凭据。
+最终回复只陈述本轮已完成的结果，不得提出问题、邀请继续回复，或声称还可以继续执行当前 Run。
 你必须在完成任务后调用 brainbuddy_finish，并且它必须是该 AssistantMessage 中唯一的工具调用。
 最终回复只能引用本 Run 已见过的 ID 与 Memory Path。不要只输出普通文本后结束。`;
+
+export function requiresDurableMemory(message: string): boolean {
+  return /(?:记住|记录(?:一下)?|保存)|(?:账号|账户|邮箱|密码|(?:api[ _-]?)?key|token|密钥)\s*(?:是|为|有(?!什么|哪些|没有)|包括|包含)/iu.test(message);
+}
 
 export function createAgentRuntime(options: CreateAgentRuntimeOptions): AgentRuntime {
   const now = options.now ?? (() => new Date());
@@ -336,6 +346,8 @@ export function createAgentRuntime(options: CreateAgentRuntimeOptions): AgentRun
         seenCredentialIds: new Set(),
         seenMemoryPaths: new Set(),
         countedBatches: new Set(),
+        requiresMemoryWrite: requiresDurableMemory(draft.message),
+        memoryWriteHandled: false,
         budgets: { toolBatchCount: 0, toolCallCount: 0, modelRequestCount: 0, finishAttemptCount: 0 },
         emit,
         cancelled: false
@@ -487,6 +499,7 @@ function createTools(state: RunState, options: CreateAgentRuntimeOptions, approv
       const request = normalizeMemoryWrite(params);
       const prepared = options.memories.prepare(request);
       validatePreparedReferences(state, options, prepared);
+      state.memoryWriteHandled = true;
       const autoApply = state.draft.writePolicy === "auto_apply";
       if (!autoApply) {
         state.emit({ type: "approval_required", runId: state.runId, toolCallId, prepared });
@@ -518,6 +531,9 @@ function createTools(state: RunState, options: CreateAgentRuntimeOptions, approv
     parameters: finishSchema,
     executionMode: "sequential",
     async execute(_toolCallId, params) {
+      if (state.requiresMemoryWrite && !state.memoryWriteHandled) {
+        throw new Error("MEMORY_WRITE_REQUIRED: This message contains a durable fact that must be handled with write_memory before finishing");
+      }
       const references = params.references as AgentReference[];
       const unseen = references.find((reference) => !referenceWasSeen(state, reference));
       if (unseen) throw new Error(`REFERENCE_NOT_SEEN: ${unseen.kind} reference was not seen in this Run`);
@@ -610,6 +626,7 @@ const SAFE_ERROR_CODES = new Set<SafeToolError["code"]>([
   "INVALID_PATH",
   "INVALID_WRITE_REQUEST",
   "LIMIT_EXCEEDED",
+  "MEMORY_WRITE_REQUIRED",
   "MEMORY_NOT_FOUND",
   "REFERENCE_NOT_SEEN",
   "RUN_CANCELLED",
@@ -637,6 +654,7 @@ function safeErrorMessage(code: Exclude<SafeToolError["code"], "TOOL_FAILED">): 
     INVALID_PATH: "The Memory Path is not allowed",
     INVALID_WRITE_REQUEST: "The Memory write request is incomplete",
     LIMIT_EXCEEDED: "The Agent Run budget was exceeded",
+    MEMORY_WRITE_REQUIRED: "A durable fact must be handled with write_memory before finishing",
     MEMORY_NOT_FOUND: "The requested Memory was not found",
     REFERENCE_NOT_SEEN: "The reference was not seen in this Run",
     RUN_CANCELLED: "The Agent Run was cancelled",

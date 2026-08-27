@@ -14,7 +14,8 @@ describe("LocalStorageSettingsStore", () => {
     directories.push(applicationDataDirectory);
     expect(new LocalStorageSettingsStore({ applicationDataDirectory }).get()).toEqual({
       memoryDirectory: join(applicationDataDirectory, "memories"),
-      databaseDirectory: applicationDataDirectory
+      databaseDirectory: applicationDataDirectory,
+      memoryWritePolicy: "require_approval"
     });
   });
 
@@ -23,7 +24,8 @@ describe("LocalStorageSettingsStore", () => {
     directories.push(applicationDataDirectory);
     const settings = {
       memoryDirectory: join(applicationDataDirectory, "custom-memory"),
-      databaseDirectory: join(applicationDataDirectory, "custom-database")
+      databaseDirectory: join(applicationDataDirectory, "custom-database"),
+      memoryWritePolicy: "auto_apply" as const
     };
     const store = new LocalStorageSettingsStore({ applicationDataDirectory });
     expect(store.configure(settings)).toEqual(settings);
@@ -37,7 +39,7 @@ describe("LocalStorageSettingsStore", () => {
     const applicationDataDirectory = mkdtempSync(join(tmpdir(), "brainbuddy-settings-"));
     directories.push(applicationDataDirectory);
     const store = new LocalStorageSettingsStore({ applicationDataDirectory });
-    expect(() => store.configure({ memoryDirectory: "memories", databaseDirectory: applicationDataDirectory }))
+    expect(() => store.configure({ memoryDirectory: "memories", databaseDirectory: applicationDataDirectory, memoryWritePolicy: "require_approval" }))
       .toThrow("LOCAL_STORAGE_PATH_NOT_ABSOLUTE");
   });
 });

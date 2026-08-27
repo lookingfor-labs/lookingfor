@@ -135,6 +135,7 @@ export interface ModelConnectionStatus {
 export interface LocalStorageSettings {
   readonly memoryDirectory: string;
   readonly databaseDirectory: string;
+  readonly memoryWritePolicy: MemoryWritePolicy;
 }
 
 export interface DatabaseResetResult {

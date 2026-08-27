@@ -89,7 +89,8 @@ export const ConfigureModelConnectionRequestSchema = z.object({
 });
 export const ConfigureLocalStorageSettingsRequestSchema = z.object({
   memoryDirectory: z.string().trim().min(1).max(2_000),
-  databaseDirectory: z.string().trim().min(1).max(2_000)
+  databaseDirectory: z.string().trim().min(1).max(2_000),
+  memoryWritePolicy: z.enum(["require_approval", "auto_apply"])
 });
 
 export type SearchDemoSourcesRequest = z.infer<typeof SearchDemoSourcesRequestSchema>;

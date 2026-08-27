@@ -16,7 +16,8 @@ export class LocalStorageSettingsStore {
     this.#metadataPath = join(options.applicationDataDirectory, "local-storage-settings.json");
     this.#defaults = {
       memoryDirectory: join(options.applicationDataDirectory, "memories"),
-      databaseDirectory: options.applicationDataDirectory
+      databaseDirectory: options.applicationDataDirectory,
+      memoryWritePolicy: "require_approval"
     };
     if (existsSync(this.#metadataPath)) chmodSync(this.#metadataPath, 0o600);
   }
@@ -47,7 +48,11 @@ function normalizeSettings(settings: LocalStorageSettings): LocalStorageSettings
   if (!isAbsolute(memoryDirectory) || !isAbsolute(databaseDirectory)) {
     throw new Error("LOCAL_STORAGE_PATH_NOT_ABSOLUTE");
   }
-  return { memoryDirectory, databaseDirectory };
+  return {
+    memoryDirectory,
+    databaseDirectory,
+    memoryWritePolicy: settings.memoryWritePolicy === "auto_apply" ? "auto_apply" : "require_approval"
+  };
 }
 
 function writePrivateJsonAtomically(path: string, value: unknown): void {
