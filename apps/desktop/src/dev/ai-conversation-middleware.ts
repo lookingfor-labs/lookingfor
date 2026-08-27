@@ -17,11 +17,13 @@ import {
   PrepareAiConversationRequestSchema,
   ProtectionRequestSchema,
   RevealDemoSourceRequestSchema,
-  SearchDemoSourcesRequestSchema
+  SearchDemoSourcesRequestSchema,
+  TestModelConnectionRequestSchema
 } from "@brainbuddy/shared-contracts";
 import { LocalBackend } from "../backend/local-backend";
 import { LocalStorageSettingsStore } from "../backend/local-storage-settings";
 import type { ModelConnection } from "../backend/model-connection-store";
+import { testModelConnection } from "../backend/model-connection-test";
 
 const memoryOperationSchema = z.discriminatedUnion("operation", [
   z.object({ operation: z.literal("create"), path: z.string(), content: z.string(), reason: z.string() }),
@@ -235,6 +237,11 @@ export function aiConversationMiddleware(options: {
             engine = undefined;
             agentRuntime = undefined;
             return sendJson(response, 200, backend.configureModelConnection(apiKey, baseUrl, modelId));
+          }
+          if (request.url === "/api/model/test-connection") {
+            const { apiKey, baseUrl, modelId } = TestModelConnectionRequestSchema.parse(await readJson(request));
+            const saved = apiKey ? undefined : backend.requireModelConnection();
+            return sendJson(response, 200, await testModelConnection({ apiKey: apiKey ?? saved!.apiKey, baseUrl, modelId }));
           }
           if (request.url === "/api/settings/local-storage") {
             return sendJson(response, 200, storageSettings.get());

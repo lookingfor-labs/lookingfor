@@ -5,7 +5,8 @@ import {
   configureModelConnection,
   getLocalStorageSettings,
   getModelConnectionStatus,
-  prepareAgentRun
+  prepareAgentRun,
+  testModelConnection
 } from "./App";
 
 describe("browser database access", () => {
@@ -45,6 +46,21 @@ describe("browser database access", () => {
 
     await expect(getModelConnectionStatus()).resolves.toEqual(status);
     expect(fetchMock).toHaveBeenLastCalledWith("/api/model/connection-status", expect.any(Object));
+  });
+
+  it("tests an unsaved model connection through the browser backend", async () => {
+    vi.stubGlobal("window", { brainBuddy: undefined });
+    const result = { success: true, latencyMs: 31, modelId: "custom-model", message: "AI 连接可用。" } as const;
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(result), {
+      status: 200,
+      headers: { "content-type": "application/json" }
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(testModelConnection("sk-test-key-1234567890", "https://proxy.example.com/v1", "custom-model")).resolves.toEqual(result);
+    expect(fetchMock).toHaveBeenCalledWith("/api/model/test-connection", expect.objectContaining({
+      body: JSON.stringify({ apiKey: "sk-test-key-1234567890", baseUrl: "https://proxy.example.com/v1", modelId: "custom-model" })
+    }));
   });
 
   it("uses the backend interface for editable local storage paths", async () => {

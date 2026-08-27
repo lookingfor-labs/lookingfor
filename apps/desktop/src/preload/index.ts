@@ -27,6 +27,7 @@ import {
   SAVE_DEMO_CANDIDATE_CHANNEL,
   START_AI_CONVERSATION_CHANNEL,
   START_AGENT_RUN_CHANNEL,
+  TEST_MODEL_CONNECTION_CHANNEL,
   UNLOCK_DATABASE_CHANNEL
 } from "@brainbuddy/shared-contracts/channels";
 
@@ -64,6 +65,7 @@ const api: BrainBuddyApi = {
   resetDatabase: (request) => ipcRenderer.invoke(RESET_DATABASE_CHANNEL, request),
   getModelConnectionStatus: () => ipcRenderer.invoke(GET_MODEL_CONNECTION_STATUS_CHANNEL),
   configureModelConnection: (request) => ipcRenderer.invoke(CONFIGURE_MODEL_CONNECTION_CHANNEL, request),
+  testModelConnection: (request) => ipcRenderer.invoke(TEST_MODEL_CONNECTION_CHANNEL, request),
   getLocalStorageSettings: () => ipcRenderer.invoke(GET_LOCAL_STORAGE_SETTINGS_CHANNEL),
   configureLocalStorageSettings: (request) => ipcRenderer.invoke(CONFIGURE_LOCAL_STORAGE_SETTINGS_CHANNEL, request)
 };

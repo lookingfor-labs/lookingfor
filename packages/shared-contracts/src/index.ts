@@ -12,6 +12,7 @@ import type {
   MemoryFile,
   MemoryResetResult,
   MemoryRevertResult,
+  ModelConnectionTestResult,
   ModelConnectionStatus,
   LocalStorageSettings
 } from "@brainbuddy/domain";
@@ -87,6 +88,11 @@ export const ConfigureModelConnectionRequestSchema = z.object({
   baseUrl: z.string().trim().url().max(2_000),
   modelId: z.string().trim().min(1).max(100).optional()
 });
+export const TestModelConnectionRequestSchema = z.object({
+  apiKey: z.string().trim().min(8).max(512).optional(),
+  baseUrl: z.string().trim().url().max(2_000),
+  modelId: z.string().trim().min(1).max(100)
+});
 export const ConfigureLocalStorageSettingsRequestSchema = z.object({
   memoryDirectory: z.string().trim().min(1).max(2_000),
   databaseDirectory: z.string().trim().min(1).max(2_000),
@@ -126,6 +132,7 @@ export type ConfigureDatabasePasswordRequest = z.infer<typeof ConfigureDatabaseP
 export type UnlockDatabaseRequest = z.infer<typeof UnlockDatabaseRequestSchema>;
 export type ResetDatabaseRequest = z.infer<typeof ResetDatabaseRequestSchema>;
 export type ConfigureModelConnectionRequest = z.infer<typeof ConfigureModelConnectionRequestSchema>;
+export type TestModelConnectionRequest = z.infer<typeof TestModelConnectionRequestSchema>;
 export type ConfigureLocalStorageSettingsRequest = z.infer<typeof ConfigureLocalStorageSettingsRequestSchema>;
 
 export interface AiConversationRunEvent {
@@ -164,6 +171,7 @@ export interface BrainBuddyApi {
   resetDatabase(request: ResetDatabaseRequest): Promise<DatabaseResetResult>;
   getModelConnectionStatus(): Promise<ModelConnectionStatus>;
   configureModelConnection(request: ConfigureModelConnectionRequest): Promise<ModelConnectionStatus>;
+  testModelConnection(request: TestModelConnectionRequest): Promise<ModelConnectionTestResult>;
   getLocalStorageSettings(): Promise<LocalStorageSettings>;
   configureLocalStorageSettings(request: ConfigureLocalStorageSettingsRequest): Promise<LocalStorageSettings>;
 }

@@ -132,6 +132,13 @@ export interface ModelConnectionStatus {
   readonly maskedApiKey?: string;
 }
 
+export interface ModelConnectionTestResult {
+  readonly success: boolean;
+  readonly latencyMs: number;
+  readonly modelId: string;
+  readonly message: string;
+}
+
 export interface LocalStorageSettings {
   readonly memoryDirectory: string;
   readonly databaseDirectory: string;

@@ -11,6 +11,7 @@ import {
 import { LocalBackend } from "../backend/local-backend";
 import { LocalStorageSettingsStore } from "../backend/local-storage-settings";
 import { modelConnectionFromEnvironment } from "../backend/model-connection-store";
+import { testModelConnection } from "../backend/model-connection-test";
 import { resolveMainRuntimePaths } from "./runtime-paths";
 import {
   ANALYZE_INPUT_CHANNEL,
@@ -56,6 +57,8 @@ import {
   START_AGENT_RUN_CHANNEL,
   StartAgentRunRequestSchema,
   StartAiConversationRequestSchema,
+  TEST_MODEL_CONNECTION_CHANNEL,
+  TestModelConnectionRequestSchema,
   UNLOCK_DATABASE_CHANNEL,
   UnlockDatabaseRequestSchema
 } from "@brainbuddy/shared-contracts";
@@ -89,10 +92,7 @@ function getAiConversationEngine(): AiConversationEngine {
   if (aiConversationEngine) return aiConversationEngine;
   if (!localBackend) throw new Error("Local stores are not ready");
   const connection = localBackend.requireModelConnection();
-  aiConversationEngine = createDeepSeekAiConversationEngine({
-    apiKey: connection.apiKey,
-    modelId: connection.modelId
-  });
+  aiConversationEngine = createDeepSeekAiConversationEngine(connection);
   return aiConversationEngine;
 }
 
@@ -101,8 +101,7 @@ function getAgentRuntime(): AgentRuntime {
   if (!localBackend) throw new Error("Local stores are not ready");
   const connection = localBackend.requireModelConnection();
   agentRuntime = createDeepSeekAgentRuntime({
-    apiKey: connection.apiKey,
-    modelId: connection.modelId,
+    ...connection,
     records: localBackend.records,
     memories: localBackend.memories,
     recorder: createFileAgentRunRecorder({ directory: join(app.getPath("userData"), "agent-runs") })
@@ -289,6 +288,11 @@ app.whenReady().then(() => {
     aiConversationEngine = undefined;
     agentRuntime = undefined;
     return localBackend!.configureModelConnection(apiKey, baseUrl, modelId);
+  });
+  ipcMain.handle(TEST_MODEL_CONNECTION_CHANNEL, async (_event, request: unknown) => {
+    const { apiKey, baseUrl, modelId } = TestModelConnectionRequestSchema.parse(request);
+    const saved = apiKey ? undefined : localBackend!.requireModelConnection();
+    return testModelConnection({ apiKey: apiKey ?? saved!.apiKey, baseUrl, modelId });
   });
   ipcMain.handle(GET_LOCAL_STORAGE_SETTINGS_CHANNEL, () => localStorageSettings!.get());
   ipcMain.handle(CONFIGURE_LOCAL_STORAGE_SETTINGS_CHANNEL, (_event, request: unknown) => {

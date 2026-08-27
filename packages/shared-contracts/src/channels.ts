@@ -23,5 +23,6 @@ export const LOCK_DATABASE_CHANNEL = "database:lock";
 export const RESET_DATABASE_CHANNEL = "database:reset";
 export const GET_MODEL_CONNECTION_STATUS_CHANNEL = "model:connection-status";
 export const CONFIGURE_MODEL_CONNECTION_CHANNEL = "model:configure-connection";
+export const TEST_MODEL_CONNECTION_CHANNEL = "model:test-connection";
 export const GET_LOCAL_STORAGE_SETTINGS_CHANNEL = "settings:get-local-storage";
 export const CONFIGURE_LOCAL_STORAGE_SETTINGS_CHANNEL = "settings:configure-local-storage";

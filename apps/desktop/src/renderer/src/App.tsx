@@ -19,6 +19,7 @@ import type {
   MemoryWritePolicy,
   MemoryOperation,
   LocalStorageSettings,
+  ModelConnectionTestResult,
   ModelConnectionStatus,
   PreparedMemoryWrite,
   PrivacyAnalysis,
@@ -1012,6 +1013,12 @@ export async function configureModelConnection(apiKey: string, baseUrl: string, 
   const request = { apiKey, baseUrl, ...(modelId ? { modelId } : {}) };
   if (window.brainBuddy) return window.brainBuddy.configureModelConnection(request);
   return postJson<ModelConnectionStatus>("/api/model/configure-connection", request);
+}
+
+export async function testModelConnection(apiKey: string | undefined, baseUrl: string, modelId: string): Promise<ModelConnectionTestResult> {
+  const request = { ...(apiKey ? { apiKey } : {}), baseUrl, modelId };
+  if (window.brainBuddy) return window.brainBuddy.testModelConnection(request);
+  return postJson<ModelConnectionTestResult>("/api/model/test-connection", request);
 }
 
 export async function getLocalStorageSettings(): Promise<LocalStorageSettings> {
