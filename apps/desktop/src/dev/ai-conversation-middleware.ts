@@ -11,6 +11,7 @@ import {
 import type { AiConversationDraft } from "@brainbuddy/domain";
 import {
   AnalyzeInputRequestSchema,
+  ConfigureLocalStorageSettingsRequestSchema,
   ConfigureModelConnectionRequestSchema,
   PrepareAgentRunRequestSchema,
   PrepareAiConversationRequestSchema,
@@ -19,6 +20,7 @@ import {
   SearchDemoSourcesRequestSchema
 } from "@brainbuddy/shared-contracts";
 import { LocalBackend } from "../backend/local-backend";
+import { LocalStorageSettingsStore } from "../backend/local-storage-settings";
 import type { ModelConnection } from "../backend/model-connection-store";
 
 const memoryOperationSchema = z.discriminatedUnion("operation", [
@@ -34,10 +36,17 @@ export function aiConversationMiddleware(options: {
   let engine: AiConversationEngine | undefined;
   let agentRuntime: AgentRuntime | undefined;
   const drafts = new Map<string, AiConversationDraft>();
-  const backend = new LocalBackend({
-    dataDirectory: options.dataDirectory,
-    ...(options.initialModelConnection ? { initialModelConnection: options.initialModelConnection } : {})
-  });
+  const storageSettings = new LocalStorageSettingsStore({ applicationDataDirectory: options.dataDirectory });
+  const createBackend = () => {
+    const storage = storageSettings.get();
+    return new LocalBackend({
+      applicationDataDirectory: options.dataDirectory,
+      databaseDirectory: storage.databaseDirectory,
+      memoryDirectory: storage.memoryDirectory,
+      ...(options.initialModelConnection ? { initialModelConnection: options.initialModelConnection } : {})
+    });
+  };
+  let backend = createBackend();
   const activeAiRuns = new Set<string>();
   const activeAgentRuns = new Set<string>();
   const getEngine = () => {
@@ -63,7 +72,7 @@ export function aiConversationMiddleware(options: {
     configureServer(server) {
       server.httpServer?.once("close", () => backend.close());
       server.middlewares.use(async (request, response, next) => {
-        if (request.method !== "POST" || (!request.url?.startsWith("/api/privacy/") && !request.url?.startsWith("/api/ai-conversation/") && !request.url?.startsWith("/api/agent/") && !request.url?.startsWith("/api/memory/") && !request.url?.startsWith("/api/database/") && !request.url?.startsWith("/api/model/"))) return next();
+        if (request.method !== "POST" || (!request.url?.startsWith("/api/privacy/") && !request.url?.startsWith("/api/ai-conversation/") && !request.url?.startsWith("/api/agent/") && !request.url?.startsWith("/api/memory/") && !request.url?.startsWith("/api/database/") && !request.url?.startsWith("/api/model/") && !request.url?.startsWith("/api/settings/"))) return next();
         try {
           if (request.url === "/api/privacy/analyze") {
             const { text } = AnalyzeInputRequestSchema.parse(await readJson(request));
@@ -218,14 +227,30 @@ export function aiConversationMiddleware(options: {
             return sendJson(response, 200, backend.modelConnectionStatus());
           }
           if (request.url === "/api/model/configure-connection") {
-            const { apiKey, modelId } = ConfigureModelConnectionRequestSchema.parse(await readJson(request));
+            const { apiKey, baseUrl, modelId } = ConfigureModelConnectionRequestSchema.parse(await readJson(request));
             if (activeAiRuns.size || activeAgentRuns.size) {
               return sendJson(response, 409, { error: "模型配置正在被 AI Run 使用，请先等待完成或取消 Run。" });
             }
             drafts.clear();
             engine = undefined;
             agentRuntime = undefined;
-            return sendJson(response, 200, backend.configureModelConnection(apiKey, modelId));
+            return sendJson(response, 200, backend.configureModelConnection(apiKey, baseUrl, modelId));
+          }
+          if (request.url === "/api/settings/local-storage") {
+            return sendJson(response, 200, storageSettings.get());
+          }
+          if (request.url === "/api/settings/configure-local-storage") {
+            const settings = ConfigureLocalStorageSettingsRequestSchema.parse(await readJson(request));
+            if (activeAiRuns.size || activeAgentRuns.size) {
+              return sendJson(response, 409, { error: "本地存储配置正在被 AI Run 使用，请先等待完成或取消 Run。" });
+            }
+            const configured = storageSettings.configure(settings);
+            drafts.clear();
+            engine = undefined;
+            agentRuntime = undefined;
+            backend.close();
+            backend = createBackend();
+            return sendJson(response, 200, configured);
           }
           return sendJson(response, 404, { error: "Not found" });
         } catch (error) {

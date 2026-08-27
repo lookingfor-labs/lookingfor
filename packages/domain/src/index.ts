@@ -127,8 +127,14 @@ export interface DatabaseAccessStatus {
 export interface ModelConnectionStatus {
   readonly provider: "deepseek";
   readonly configured: boolean;
+  readonly baseUrl: string;
   readonly modelId: string;
   readonly maskedApiKey?: string;
+}
+
+export interface LocalStorageSettings {
+  readonly memoryDirectory: string;
+  readonly databaseDirectory: string;
 }
 
 export interface DatabaseResetResult {

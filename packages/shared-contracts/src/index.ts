@@ -12,39 +12,15 @@ import type {
   MemoryFile,
   MemoryResetResult,
   MemoryRevertResult,
-  ModelConnectionStatus
+  ModelConnectionStatus,
+  LocalStorageSettings
 } from "@brainbuddy/domain";
 import type {
   AgentRunDraft,
   AgentRuntimeEvent,
   ApprovalResolution
 } from "@brainbuddy/agent-runtime";
-
-export const ANALYZE_INPUT_CHANNEL = "privacy:analyze-input";
-export const PREVIEW_PROTECTION_CHANNEL = "privacy:preview-protection";
-export const SAVE_DEMO_CANDIDATE_CHANNEL = "memory:save-demo-candidate";
-export const SEARCH_DEMO_SOURCES_CHANNEL = "source:search-demo-sources";
-export const REVEAL_DEMO_SOURCE_CHANNEL = "memory:reveal-demo-source";
-export const PREPARE_AI_CONVERSATION_CHANNEL = "ai:prepare-conversation";
-export const START_AI_CONVERSATION_CHANNEL = "ai:start-conversation";
-export const CANCEL_AI_CONVERSATION_CHANNEL = "ai:cancel-conversation";
-export const AI_CONVERSATION_EVENT_CHANNEL = "ai:conversation-event";
-export const APPLY_MEMORY_OPERATION_CHANNEL = "memory:apply-operation";
-export const PREPARE_AGENT_RUN_CHANNEL = "agent:prepare-run";
-export const START_AGENT_RUN_CHANNEL = "agent:start-run";
-export const RESOLVE_AGENT_APPROVAL_CHANNEL = "agent:resolve-approval";
-export const CANCEL_AGENT_RUN_CHANNEL = "agent:cancel-run";
-export const AGENT_RUN_EVENT_CHANNEL = "agent:run-event";
-export const REVERT_MEMORY_REVISION_CHANNEL = "memory:revert-revision";
-export const RESET_MEMORY_CONTEXT_CHANNEL = "memory:reset-test-context";
-export const LIST_MEMORY_FILES_CHANNEL = "memory:list-files";
-export const GET_DATABASE_ACCESS_STATUS_CHANNEL = "database:access-status";
-export const CONFIGURE_DATABASE_PASSWORD_CHANNEL = "database:configure-password";
-export const UNLOCK_DATABASE_CHANNEL = "database:unlock";
-export const LOCK_DATABASE_CHANNEL = "database:lock";
-export const RESET_DATABASE_CHANNEL = "database:reset";
-export const GET_MODEL_CONNECTION_STATUS_CHANNEL = "model:connection-status";
-export const CONFIGURE_MODEL_CONNECTION_CHANNEL = "model:configure-connection";
+export * from "./channels.ts";
 
 export const AnalyzeInputRequestSchema = z.object({
   text: z.string().max(20_000)
@@ -108,7 +84,12 @@ export const UnlockDatabaseRequestSchema = z.object({ password: z.string().min(1
 export const ResetDatabaseRequestSchema = z.object({ confirmation: z.literal("清除数据库") });
 export const ConfigureModelConnectionRequestSchema = z.object({
   apiKey: z.string().trim().min(8).max(512),
+  baseUrl: z.string().trim().url().max(2_000),
   modelId: z.string().trim().min(1).max(100).optional()
+});
+export const ConfigureLocalStorageSettingsRequestSchema = z.object({
+  memoryDirectory: z.string().trim().min(1).max(2_000),
+  databaseDirectory: z.string().trim().min(1).max(2_000)
 });
 
 export type SearchDemoSourcesRequest = z.infer<typeof SearchDemoSourcesRequestSchema>;
@@ -144,6 +125,7 @@ export type ConfigureDatabasePasswordRequest = z.infer<typeof ConfigureDatabaseP
 export type UnlockDatabaseRequest = z.infer<typeof UnlockDatabaseRequestSchema>;
 export type ResetDatabaseRequest = z.infer<typeof ResetDatabaseRequestSchema>;
 export type ConfigureModelConnectionRequest = z.infer<typeof ConfigureModelConnectionRequestSchema>;
+export type ConfigureLocalStorageSettingsRequest = z.infer<typeof ConfigureLocalStorageSettingsRequestSchema>;
 
 export interface AiConversationRunEvent {
   readonly runId: string;
@@ -181,4 +163,6 @@ export interface BrainBuddyApi {
   resetDatabase(request: ResetDatabaseRequest): Promise<DatabaseResetResult>;
   getModelConnectionStatus(): Promise<ModelConnectionStatus>;
   configureModelConnection(request: ConfigureModelConnectionRequest): Promise<ModelConnectionStatus>;
+  getLocalStorageSettings(): Promise<LocalStorageSettings>;
+  configureLocalStorageSettings(request: ConfigureLocalStorageSettingsRequest): Promise<LocalStorageSettings>;
 }

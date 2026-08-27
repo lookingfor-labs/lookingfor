@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { configureDatabasePassword, configureModelConnection, getModelConnectionStatus, prepareAgentRun } from "./App";
+import {
+  configureDatabasePassword,
+  configureLocalStorageSettings,
+  configureModelConnection,
+  getLocalStorageSettings,
+  getModelConnectionStatus,
+  prepareAgentRun
+} from "./App";
 
 describe("browser database access", () => {
   afterEach(() => vi.unstubAllGlobals());
@@ -24,20 +31,37 @@ describe("browser database access", () => {
 
   it("uses the same backend-only model connection interface in browser development", async () => {
     vi.stubGlobal("window", { brainBuddy: undefined });
-    const status = { provider: "deepseek", configured: true, modelId: "deepseek-chat", maskedApiKey: "sk-••••7890" } as const;
+    const status = { provider: "deepseek", configured: true, baseUrl: "https://proxy.example.com/v1", modelId: "custom-model", maskedApiKey: "sk-••••7890" } as const;
     const fetchMock = vi.fn().mockImplementation(async () => new Response(JSON.stringify(status), {
       status: 200,
       headers: { "content-type": "application/json" }
     }));
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(configureModelConnection("sk-test-key-1234567890", "deepseek-chat")).resolves.toEqual(status);
+    await expect(configureModelConnection("sk-test-key-1234567890", "https://proxy.example.com/v1", "custom-model")).resolves.toEqual(status);
     expect(fetchMock).toHaveBeenLastCalledWith("/api/model/configure-connection", expect.objectContaining({
-      body: JSON.stringify({ apiKey: "sk-test-key-1234567890", modelId: "deepseek-chat" })
+      body: JSON.stringify({ apiKey: "sk-test-key-1234567890", baseUrl: "https://proxy.example.com/v1", modelId: "custom-model" })
     }));
 
     await expect(getModelConnectionStatus()).resolves.toEqual(status);
     expect(fetchMock).toHaveBeenLastCalledWith("/api/model/connection-status", expect.any(Object));
+  });
+
+  it("uses the backend interface for editable local storage paths", async () => {
+    vi.stubGlobal("window", { brainBuddy: undefined });
+    const settings = { memoryDirectory: "/tmp/brainbuddy/memories", databaseDirectory: "/tmp/brainbuddy/database" };
+    const fetchMock = vi.fn().mockImplementation(async () => new Response(JSON.stringify(settings), {
+      status: 200,
+      headers: { "content-type": "application/json" }
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(getLocalStorageSettings()).resolves.toEqual(settings);
+    expect(fetchMock).toHaveBeenLastCalledWith("/api/settings/local-storage", expect.any(Object));
+    await expect(configureLocalStorageSettings(settings)).resolves.toEqual(settings);
+    expect(fetchMock).toHaveBeenLastCalledWith("/api/settings/configure-local-storage", expect.objectContaining({
+      body: JSON.stringify(settings)
+    }));
   });
 
   it("submits the reviewed privacy decisions when preparing an Agent Run", async () => {

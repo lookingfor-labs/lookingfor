@@ -7,7 +7,7 @@ export interface MainRuntimePaths {
 
 export function resolveMainRuntimePaths(moduleUrl: string): MainRuntimePaths {
   return {
-    preload: fileURLToPath(new URL("../preload/index.mjs", moduleUrl)),
+    preload: fileURLToPath(new URL("../preload/index.cjs", moduleUrl)),
     renderer: fileURLToPath(new URL("../renderer/index.html", moduleUrl))
   };
 }

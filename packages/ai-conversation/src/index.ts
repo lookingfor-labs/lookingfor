@@ -88,6 +88,7 @@ const systemPrompt = `你是 BrainBuddy 的对话模型。用户可能提问、�
 
 export interface DeepSeekAiConversationEngineOptions {
   readonly apiKey: string;
+  readonly baseUrl?: string;
   readonly modelId?: string;
   readonly now?: () => Date;
   readonly idFactory?: () => string;
@@ -109,8 +110,14 @@ export function createDeepSeekAiConversationEngine(options: DeepSeekAiConversati
   const provider = deepseekProvider();
   models.setProvider(provider);
   const modelId = options.modelId?.trim() || DEFAULT_MODEL;
-  const model = provider.getModels().find(({ id }) => id === modelId);
-  if (!model) throw new Error(`DeepSeek model is not available: ${modelId}`);
+  const template = provider.getModels().find(({ id }) => id === modelId) ?? provider.getModels()[0];
+  if (!template) throw new Error("DeepSeek model catalog is empty");
+  const model = {
+    ...template,
+    id: modelId,
+    name: modelId,
+    baseUrl: options.baseUrl?.trim() || template.baseUrl
+  };
   const now = options.now ?? (() => new Date());
   const idFactory = options.idFactory ?? randomUUID;
 

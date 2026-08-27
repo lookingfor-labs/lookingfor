@@ -4,6 +4,7 @@ import type { ModelConnectionStatus } from "@brainbuddy/domain";
 
 export interface ModelConnection {
   readonly apiKey: string;
+  readonly baseUrl: string;
   readonly modelId: string;
 }
 
@@ -12,11 +13,12 @@ export function modelConnectionFromEnvironment(environment: NodeJS.ProcessEnv): 
   if (!apiKey) return undefined;
   return {
     apiKey,
+    baseUrl: environment.SECRET_DEEPSEEK_BASE_URL?.trim() || DEFAULT_BASE_URL,
     modelId: environment.SECRET_DEEPSEEK_MODEL?.trim() || DEFAULT_MODEL_ID
   };
 }
 
-interface StoredModelConnection {
+interface StoredModelConnectionV1 {
   readonly version: 1;
   readonly provider: "deepseek";
   readonly modelId: string;
@@ -25,7 +27,16 @@ interface StoredModelConnection {
   readonly ciphertext: string;
 }
 
-const DEFAULT_MODEL_ID = "deepseek-chat";
+interface StoredModelConnectionV2 extends Omit<StoredModelConnectionV1, "version"> {
+  readonly version: 2;
+  readonly baseUrl: string;
+}
+
+type StoredModelConnection = StoredModelConnectionV1 | StoredModelConnectionV2;
+
+export const DEFAULT_MODEL_BASE_URL = "https://api.deepseek.com";
+export const DEFAULT_MODEL_ID = "deepseek-v4-flash";
+const DEFAULT_BASE_URL = DEFAULT_MODEL_BASE_URL;
 const AAD = Buffer.from("brainbuddy:model-connection:v1", "utf8");
 
 export class ModelConnectionStore {
@@ -40,26 +51,28 @@ export class ModelConnectionStore {
     this.#metadataPath = options.metadataPath;
     this.#encryptionKey = options.encryptionKey;
     if (!existsSync(this.#metadataPath) && options.initialConnection?.apiKey.trim()) {
-      this.configure(options.initialConnection.apiKey, options.initialConnection.modelId);
+      this.configure(options.initialConnection.apiKey, options.initialConnection.baseUrl, options.initialConnection.modelId);
     }
     if (existsSync(this.#metadataPath)) chmodSync(this.#metadataPath, 0o600);
   }
 
   status(): ModelConnectionStatus {
     if (!existsSync(this.#metadataPath)) {
-      return { provider: "deepseek", configured: false, modelId: DEFAULT_MODEL_ID };
+      return { provider: "deepseek", configured: false, baseUrl: DEFAULT_BASE_URL, modelId: DEFAULT_MODEL_ID };
     }
     const connection = this.requireConnection();
     return {
       provider: "deepseek",
       configured: true,
+      baseUrl: connection.baseUrl,
       modelId: connection.modelId,
       maskedApiKey: maskApiKey(connection.apiKey)
     };
   }
 
-  configure(apiKey: string, modelId = DEFAULT_MODEL_ID): ModelConnectionStatus {
+  configure(apiKey: string, baseUrl = DEFAULT_BASE_URL, modelId = DEFAULT_MODEL_ID): ModelConnectionStatus {
     const normalizedApiKey = apiKey.trim();
+    const normalizedBaseUrl = normalizeBaseUrl(baseUrl);
     const normalizedModelId = modelId.trim();
     if (normalizedApiKey.length < 8 || normalizedApiKey.length > 512) throw new Error("MODEL_API_KEY_INVALID");
     if (!normalizedModelId || normalizedModelId.length > 100) throw new Error("MODEL_ID_INVALID");
@@ -68,9 +81,10 @@ export class ModelConnectionStore {
     const cipher = createCipheriv("aes-256-gcm", this.#encryptionKey, iv);
     cipher.setAAD(AAD);
     const ciphertext = Buffer.concat([cipher.update(normalizedApiKey, "utf8"), cipher.final()]);
-    const stored: StoredModelConnection = {
-      version: 1,
+    const stored: StoredModelConnectionV2 = {
+      version: 2,
       provider: "deepseek",
+      baseUrl: normalizedBaseUrl,
       modelId: normalizedModelId,
       iv: iv.toString("base64"),
       authTag: cipher.getAuthTag().toString("base64"),
@@ -84,7 +98,7 @@ export class ModelConnectionStore {
     if (!existsSync(this.#metadataPath)) throw new Error("MODEL_NOT_CONFIGURED");
     try {
       const stored = JSON.parse(readFileSync(this.#metadataPath, "utf8")) as StoredModelConnection;
-      if (stored.version !== 1 || stored.provider !== "deepseek") throw new Error("invalid metadata");
+      if ((stored.version !== 1 && stored.version !== 2) || stored.provider !== "deepseek") throw new Error("invalid metadata");
       const decipher = createDecipheriv("aes-256-gcm", this.#encryptionKey, Buffer.from(stored.iv, "base64"));
       decipher.setAAD(AAD);
       decipher.setAuthTag(Buffer.from(stored.authTag, "base64"));
@@ -93,10 +107,25 @@ export class ModelConnectionStore {
         decipher.final()
       ]).toString("utf8");
       if (!apiKey || !stored.modelId) throw new Error("invalid connection");
-      return { apiKey, modelId: stored.modelId };
+      return {
+        apiKey,
+        baseUrl: stored.version === 2 ? normalizeBaseUrl(stored.baseUrl) : DEFAULT_BASE_URL,
+        modelId: stored.modelId
+      };
     } catch {
       throw new Error("MODEL_CONFIG_INVALID");
     }
+  }
+}
+
+function normalizeBaseUrl(value: string): string {
+  const normalized = value.trim().replace(/\/+$/u, "");
+  try {
+    const url = new URL(normalized);
+    if (url.protocol !== "https:" && url.protocol !== "http:") throw new Error("unsupported protocol");
+    return url.toString().replace(/\/$/u, "");
+  } catch {
+    throw new Error("MODEL_BASE_URL_INVALID");
   }
 }
 

@@ -8,8 +8,10 @@ import {
   CANCEL_AI_CONVERSATION_CHANNEL,
   CANCEL_AGENT_RUN_CHANNEL,
   CONFIGURE_DATABASE_PASSWORD_CHANNEL,
+  CONFIGURE_LOCAL_STORAGE_SETTINGS_CHANNEL,
   CONFIGURE_MODEL_CONNECTION_CHANNEL,
   GET_DATABASE_ACCESS_STATUS_CHANNEL,
+  GET_LOCAL_STORAGE_SETTINGS_CHANNEL,
   GET_MODEL_CONNECTION_STATUS_CHANNEL,
   LIST_MEMORY_FILES_CHANNEL,
   LOCK_DATABASE_CHANNEL,
@@ -26,7 +28,7 @@ import {
   START_AI_CONVERSATION_CHANNEL,
   START_AGENT_RUN_CHANNEL,
   UNLOCK_DATABASE_CHANNEL
-} from "@brainbuddy/shared-contracts";
+} from "@brainbuddy/shared-contracts/channels";
 
 const api: BrainBuddyApi = {
   analyzeInput: (request) => ipcRenderer.invoke(ANALYZE_INPUT_CHANNEL, request),
@@ -61,7 +63,9 @@ const api: BrainBuddyApi = {
   lockDatabase: () => ipcRenderer.invoke(LOCK_DATABASE_CHANNEL),
   resetDatabase: (request) => ipcRenderer.invoke(RESET_DATABASE_CHANNEL, request),
   getModelConnectionStatus: () => ipcRenderer.invoke(GET_MODEL_CONNECTION_STATUS_CHANNEL),
-  configureModelConnection: (request) => ipcRenderer.invoke(CONFIGURE_MODEL_CONNECTION_CHANNEL, request)
+  configureModelConnection: (request) => ipcRenderer.invoke(CONFIGURE_MODEL_CONNECTION_CHANNEL, request),
+  getLocalStorageSettings: () => ipcRenderer.invoke(GET_LOCAL_STORAGE_SETTINGS_CHANNEL),
+  configureLocalStorageSettings: (request) => ipcRenderer.invoke(CONFIGURE_LOCAL_STORAGE_SETTINGS_CHANNEL, request)
 };
 
 contextBridge.exposeInMainWorld("brainBuddy", api);

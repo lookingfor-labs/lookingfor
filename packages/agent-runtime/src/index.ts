@@ -205,6 +205,7 @@ export function createFileAgentRunRecorder(options: {
 
 export interface CreateDeepSeekAgentRuntimeOptions {
   readonly apiKey: string;
+  readonly baseUrl?: string;
   readonly modelId?: string;
   readonly records: ProtectedRecordReader;
   readonly memories: MemoryStore;
@@ -371,8 +372,14 @@ export function createDeepSeekAgentRuntime(options: CreateDeepSeekAgentRuntimeOp
   const provider = deepseekProvider();
   models.setProvider(provider);
   const modelId = options.modelId?.trim() || "deepseek-v4-flash";
-  const model = provider.getModels().find(({ id }) => id === modelId);
-  if (!model) throw new Error(`DeepSeek model is not available: ${modelId}`);
+  const template = provider.getModels().find(({ id }) => id === modelId) ?? provider.getModels()[0];
+  if (!template) throw new Error("DeepSeek model catalog is empty");
+  const model = {
+    ...template,
+    id: modelId,
+    name: modelId,
+    baseUrl: options.baseUrl?.trim() || template.baseUrl
+  };
   return createAgentRuntime({
     model,
     streamFn: models.streamSimple.bind(models),

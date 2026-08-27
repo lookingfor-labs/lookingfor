@@ -18,6 +18,7 @@ import type {
   MemoryRevertResult,
   MemoryWritePolicy,
   MemoryOperation,
+  LocalStorageSettings,
   ModelConnectionStatus,
   PreparedMemoryWrite,
   PrivacyAnalysis,
@@ -1007,10 +1008,20 @@ export async function getModelConnectionStatus(): Promise<ModelConnectionStatus>
   return postJson<ModelConnectionStatus>("/api/model/connection-status", {});
 }
 
-export async function configureModelConnection(apiKey: string, modelId?: string): Promise<ModelConnectionStatus> {
-  const request = { apiKey, ...(modelId ? { modelId } : {}) };
+export async function configureModelConnection(apiKey: string, baseUrl: string, modelId?: string): Promise<ModelConnectionStatus> {
+  const request = { apiKey, baseUrl, ...(modelId ? { modelId } : {}) };
   if (window.brainBuddy) return window.brainBuddy.configureModelConnection(request);
   return postJson<ModelConnectionStatus>("/api/model/configure-connection", request);
+}
+
+export async function getLocalStorageSettings(): Promise<LocalStorageSettings> {
+  if (window.brainBuddy) return window.brainBuddy.getLocalStorageSettings();
+  return postJson<LocalStorageSettings>("/api/settings/local-storage", {});
+}
+
+export async function configureLocalStorageSettings(settings: LocalStorageSettings): Promise<LocalStorageSettings> {
+  if (window.brainBuddy) return window.brainBuddy.configureLocalStorageSettings(settings);
+  return postJson<LocalStorageSettings>("/api/settings/configure-local-storage", settings);
 }
 
 export async function configureDatabasePassword(currentPassword: string | undefined, newPassword: string): Promise<DatabaseAccessStatus> {

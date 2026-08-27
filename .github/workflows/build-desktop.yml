@@ -107,11 +107,12 @@ jobs:
             > "${RUNNER_TEMP}/brainbuddy-smoke.log" 2>&1 &
           app_pid=$!
           trap 'kill "$app_pid" 2>/dev/null || true' EXIT
+          renderer_ready=false
           for attempt in {1..15}; do
             targets=$(curl -fsS http://127.0.0.1:19222/json/list 2>/dev/null || true)
             if printf "%s" "$targets" | grep -q "BrainBuddy Privacy Lab"; then
-              echo "Packaged renderer is ready"
-              exit 0
+              renderer_ready=true
+              break
             fi
             if ! kill -0 "$app_pid" 2>/dev/null; then
               cat "${RUNNER_TEMP}/brainbuddy-smoke.log"
@@ -119,8 +120,42 @@ jobs:
             fi
             sleep 1
           done
-          cat "${RUNNER_TEMP}/brainbuddy-smoke.log"
-          exit 1
+          if [ "$renderer_ready" != true ]; then
+            cat "${RUNNER_TEMP}/brainbuddy-smoke.log"
+            exit 1
+          fi
+          export BRAINBUDDY_CDP_TARGETS="$targets"
+          node --input-type=module <<'NODE'
+          const targets = JSON.parse(process.env.BRAINBUDDY_CDP_TARGETS);
+          const target = targets.find(({ type }) => type === "page");
+          if (!target) throw new Error("Packaged renderer target was not found");
+          const socket = new WebSocket(target.webSocketDebuggerUrl);
+          await new Promise((resolve, reject) => {
+            socket.addEventListener("open", resolve, { once: true });
+            socket.addEventListener("error", reject, { once: true });
+          });
+          socket.send(JSON.stringify({
+            id: 1,
+            method: "Runtime.evaluate",
+            params: {
+              expression: "window.brainBuddy.getDatabaseAccessStatus().then(status => ({ bridge: typeof window.brainBuddy, status }))",
+              awaitPromise: true,
+              returnByValue: true
+            }
+          }));
+          const response = await new Promise((resolve, reject) => {
+            socket.addEventListener("message", ({ data }) => {
+              const message = JSON.parse(String(data));
+              if (message.id === 1) resolve(message);
+            });
+            socket.addEventListener("error", reject, { once: true });
+          });
+          socket.close();
+          if (response.result?.exceptionDetails || response.result?.result?.value?.bridge !== "object") {
+            throw new Error(`Packaged Electron bridge smoke test failed: ${JSON.stringify(response)}`);
+          }
+          console.log("Packaged renderer, preload bridge and database IPC are ready");
+          NODE
 
       - name: Verify macOS application signature and architecture
         if: runner.os == 'macOS'

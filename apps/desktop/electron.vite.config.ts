@@ -11,6 +11,14 @@ export default defineConfig({
     ]
   },
   preload: {
+    build: {
+      rollupOptions: {
+        output: {
+          format: "cjs",
+          entryFileNames: "[name].cjs"
+        }
+      }
+    },
     plugins: [
       externalizeDepsPlugin({
         exclude: ["@brainbuddy/shared-contracts"]

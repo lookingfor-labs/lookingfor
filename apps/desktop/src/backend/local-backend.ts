@@ -35,20 +35,27 @@ export class LocalBackend {
   readonly #sources: SqliteSourceStore;
   readonly #modelConnection: ModelConnectionStore;
 
-  constructor(options: { readonly dataDirectory: string; readonly initialModelConnection?: ModelConnection }) {
-    mkdirSync(options.dataDirectory, { recursive: true });
-    const encryptionKey = loadEncryptionKey(options.dataDirectory);
+  constructor(options: {
+    readonly applicationDataDirectory: string;
+    readonly databaseDirectory: string;
+    readonly memoryDirectory: string;
+    readonly initialModelConnection?: ModelConnection;
+  }) {
+    mkdirSync(options.applicationDataDirectory, { recursive: true });
+    mkdirSync(options.databaseDirectory, { recursive: true });
+    mkdirSync(options.memoryDirectory, { recursive: true });
+    const encryptionKey = loadEncryptionKey(options.applicationDataDirectory);
     this.#sources = new SqliteSourceStore({
-      databasePath: join(options.dataDirectory, "brainbuddy.sqlite"),
+      databasePath: join(options.databaseDirectory, "brainbuddy.sqlite"),
       encryptionKey
     });
     this.#modelConnection = new ModelConnectionStore({
-      metadataPath: join(options.dataDirectory, "model-connection.json"),
+      metadataPath: join(options.applicationDataDirectory, "model-connection.json"),
       encryptionKey,
       ...(options.initialModelConnection ? { initialConnection: options.initialModelConnection } : {})
     });
-    this.memories = new FileMemoryStore({ rootDirectory: join(options.dataDirectory, "memories") });
-    this.access = new DatabaseAccessGate({ metadataPath: join(options.dataDirectory, "database-access.json") });
+    this.memories = new FileMemoryStore({ rootDirectory: options.memoryDirectory });
+    this.access = new DatabaseAccessGate({ metadataPath: join(options.applicationDataDirectory, "database-access.json") });
     this.records = {
       search: (query, limit) => {
         const result = this.#sources.searchOffline(query);
@@ -101,8 +108,8 @@ export class LocalBackend {
     return this.#modelConnection.status();
   }
 
-  configureModelConnection(apiKey: string, modelId?: string): ModelConnectionStatus {
-    return this.#modelConnection.configure(apiKey, modelId);
+  configureModelConnection(apiKey: string, baseUrl: string, modelId?: string): ModelConnectionStatus {
+    return this.#modelConnection.configure(apiKey, baseUrl, modelId);
   }
 
   requireModelConnection(): ModelConnection {

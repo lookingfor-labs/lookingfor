@@ -6,7 +6,7 @@ describe("resolveMainRuntimePaths", () => {
     expect(resolveMainRuntimePaths(
       "file:///Applications/brainbuddy.app/Contents/Resources/app.asar/out/main/index.js"
     )).toEqual({
-      preload: "/Applications/brainbuddy.app/Contents/Resources/app.asar/out/preload/index.mjs",
+      preload: "/Applications/brainbuddy.app/Contents/Resources/app.asar/out/preload/index.cjs",
       renderer: "/Applications/brainbuddy.app/Contents/Resources/app.asar/out/renderer/index.html"
     });
   });

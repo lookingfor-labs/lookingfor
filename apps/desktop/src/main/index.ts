@@ -9,6 +9,7 @@ import {
   type AgentRuntime
 } from "@brainbuddy/agent-runtime";
 import { LocalBackend } from "../backend/local-backend";
+import { LocalStorageSettingsStore } from "../backend/local-storage-settings";
 import { modelConnectionFromEnvironment } from "../backend/model-connection-store";
 import { resolveMainRuntimePaths } from "./runtime-paths";
 import {
@@ -23,10 +24,13 @@ import {
   CancelAgentRunRequestSchema,
   CancelAiConversationRequestSchema,
   CONFIGURE_DATABASE_PASSWORD_CHANNEL,
+  CONFIGURE_LOCAL_STORAGE_SETTINGS_CHANNEL,
+  ConfigureLocalStorageSettingsRequestSchema,
   ConfigureDatabasePasswordRequestSchema,
   CONFIGURE_MODEL_CONNECTION_CHANNEL,
   ConfigureModelConnectionRequestSchema,
   GET_DATABASE_ACCESS_STATUS_CHANNEL,
+  GET_LOCAL_STORAGE_SETTINGS_CHANNEL,
   GET_MODEL_CONNECTION_STATUS_CHANNEL,
   LIST_MEMORY_FILES_CHANNEL,
   LOCK_DATABASE_CHANNEL,
@@ -57,14 +61,29 @@ import {
 } from "@brainbuddy/shared-contracts";
 
 loadDotEnv({ quiet: true });
+app.setName("BrainBuddy");
 
 let localBackend: LocalBackend | undefined;
 let aiConversationEngine: AiConversationEngine | undefined;
 let agentRuntime: AgentRuntime | undefined;
+let localStorageSettings: LocalStorageSettingsStore | undefined;
 const aiDrafts = new Map<string, ReturnType<AiConversationEngine["prepare"]>>();
 const aiRuns = new Map<string, AbortController>();
 const agentRuns = new Set<string>();
 const mainRuntimePaths = resolveMainRuntimePaths(import.meta.url);
+
+function createLocalBackend(): LocalBackend {
+  const applicationDataDirectory = app.getPath("userData");
+  localStorageSettings ??= new LocalStorageSettingsStore({ applicationDataDirectory });
+  const storage = localStorageSettings.get();
+  const initialModelConnection = modelConnectionFromEnvironment(process.env);
+  return new LocalBackend({
+    applicationDataDirectory,
+    databaseDirectory: storage.databaseDirectory,
+    memoryDirectory: storage.memoryDirectory,
+    ...(initialModelConnection ? { initialModelConnection } : {})
+  });
+}
 
 function getAiConversationEngine(): AiConversationEngine {
   if (aiConversationEngine) return aiConversationEngine;
@@ -122,12 +141,7 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
-  const dataDirectory = app.getPath("userData");
-  const initialModelConnection = modelConnectionFromEnvironment(process.env);
-  localBackend = new LocalBackend({
-    dataDirectory,
-    ...(initialModelConnection ? { initialModelConnection } : {})
-  });
+  localBackend = createLocalBackend();
   ipcMain.handle(ANALYZE_INPUT_CHANNEL, (_event, request: unknown) => {
     const { text } = AnalyzeInputRequestSchema.parse(request);
     return localBackend!.analyze(text);
@@ -269,12 +283,24 @@ app.whenReady().then(() => {
   });
   ipcMain.handle(GET_MODEL_CONNECTION_STATUS_CHANNEL, () => localBackend!.modelConnectionStatus());
   ipcMain.handle(CONFIGURE_MODEL_CONNECTION_CHANNEL, (_event, request: unknown) => {
-    const { apiKey, modelId } = ConfigureModelConnectionRequestSchema.parse(request);
+    const { apiKey, baseUrl, modelId } = ConfigureModelConnectionRequestSchema.parse(request);
     if (aiRuns.size || agentRuns.size) throw new Error("MODEL_CONFIG_BLOCKED: An AI Run is still active");
     aiDrafts.clear();
     aiConversationEngine = undefined;
     agentRuntime = undefined;
-    return localBackend!.configureModelConnection(apiKey, modelId);
+    return localBackend!.configureModelConnection(apiKey, baseUrl, modelId);
+  });
+  ipcMain.handle(GET_LOCAL_STORAGE_SETTINGS_CHANNEL, () => localStorageSettings!.get());
+  ipcMain.handle(CONFIGURE_LOCAL_STORAGE_SETTINGS_CHANNEL, (_event, request: unknown) => {
+    const settings = ConfigureLocalStorageSettingsRequestSchema.parse(request);
+    if (aiRuns.size || agentRuns.size) throw new Error("LOCAL_STORAGE_CONFIG_BLOCKED: An AI Run is still active");
+    const configured = localStorageSettings!.configure(settings);
+    aiDrafts.clear();
+    aiConversationEngine = undefined;
+    agentRuntime = undefined;
+    localBackend!.close();
+    localBackend = createLocalBackend();
+    return configured;
   });
   createWindow();
 

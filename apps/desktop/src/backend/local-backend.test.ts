@@ -13,7 +13,7 @@ describe("LocalBackend", () => {
     const dataDirectory = mkdtempSync(join(tmpdir(), "brainbuddy-local-backend-"));
     directories.push(dataDirectory);
     const original = "Figma key 是 sk-local-backend-secret-123456";
-    const first = new LocalBackend({ dataDirectory });
+    const first = createBackend(dataDirectory);
     const analysis = first.analyze(original);
     const receipt = first.save(original, analysis.entities.map(({ start, end, suggestedPolicy: policy }) => ({ start, end, policy })));
     first.memories.apply({
@@ -25,7 +25,7 @@ describe("LocalBackend", () => {
     first.access.configure(undefined, "persistent-password");
     first.close();
 
-    const reopened = new LocalBackend({ dataDirectory });
+    const reopened = createBackend(dataDirectory);
     expect(reopened.access.status()).toEqual({ passwordConfigured: true, unlocked: false });
     expect(reopened.search("Figma").sources.map(({ sourceId }) => sourceId)).toContain(receipt.sourceId);
     expect(reopened.memories.list().map(({ path }) => path)).toEqual(["memories/figma.md"]);
@@ -40,19 +40,21 @@ describe("LocalBackend", () => {
     directories.push(dataDirectory);
     const importedKey = "sk-imported-deepseek-key-123456";
     const replacementKey = "sk-replacement-deepseek-key-654321";
-    const first = new LocalBackend({
-      dataDirectory,
-      initialModelConnection: { apiKey: importedKey, modelId: "deepseek-chat" }
+    const first = createBackend(dataDirectory, {
+      apiKey: importedKey,
+      baseUrl: "https://api.deepseek.com",
+      modelId: "deepseek-v4-flash"
     });
 
     expect(first.modelConnectionStatus()).toEqual({
       provider: "deepseek",
       configured: true,
-      modelId: "deepseek-chat",
+      baseUrl: "https://api.deepseek.com",
+      modelId: "deepseek-v4-flash",
       maskedApiKey: "sk-••••3456"
     });
-    expect(first.requireModelConnection()).toEqual({ apiKey: importedKey, modelId: "deepseek-chat" });
-    first.configureModelConnection(replacementKey, "deepseek-reasoner");
+    expect(first.requireModelConnection()).toEqual({ apiKey: importedKey, baseUrl: "https://api.deepseek.com", modelId: "deepseek-v4-flash" });
+    first.configureModelConnection(replacementKey, "https://proxy.example.com/v1", "custom-model");
     first.close();
 
     const metadataPath = join(dataDirectory, "model-connection.json");
@@ -61,18 +63,19 @@ describe("LocalBackend", () => {
     expect(stored).not.toContain(replacementKey);
     expect(statSync(metadataPath).mode & 0o777).toBe(0o600);
 
-    const reopened = new LocalBackend({
-      dataDirectory,
-      initialModelConnection: { apiKey: importedKey, modelId: "deepseek-chat" }
+    const reopened = createBackend(dataDirectory, {
+      apiKey: importedKey,
+      baseUrl: "https://api.deepseek.com",
+      modelId: "deepseek-v4-flash"
     });
-    expect(reopened.requireModelConnection()).toEqual({ apiKey: replacementKey, modelId: "deepseek-reasoner" });
+    expect(reopened.requireModelConnection()).toEqual({ apiKey: replacementKey, baseUrl: "https://proxy.example.com/v1", modelId: "custom-model" });
     reopened.close();
   });
 
   it("uses the reviewed Credential ID when saving a protected conversation", () => {
     const dataDirectory = mkdtempSync(join(tmpdir(), "brainbuddy-local-backend-"));
     directories.push(dataDirectory);
-    const backend = new LocalBackend({ dataDirectory });
+    const backend = createBackend(dataDirectory);
     const original = "记录一下 agentflow 的密码是 77778888";
     const secret = "77778888";
     const start = original.indexOf(secret);
@@ -95,3 +98,16 @@ describe("LocalBackend", () => {
     backend.close();
   });
 });
+
+function createBackend(dataDirectory: string, initialModelConnection?: {
+  readonly apiKey: string;
+  readonly baseUrl: string;
+  readonly modelId: string;
+}): LocalBackend {
+  return new LocalBackend({
+    applicationDataDirectory: dataDirectory,
+    databaseDirectory: dataDirectory,
+    memoryDirectory: join(dataDirectory, "memories"),
+    ...(initialModelConnection ? { initialModelConnection } : {})
+  });
+}
