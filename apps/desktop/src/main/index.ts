@@ -10,6 +10,7 @@ import {
 } from "@brainbuddy/agent-runtime";
 import { LocalBackend } from "../backend/local-backend";
 import { modelConnectionFromEnvironment } from "../backend/model-connection-store";
+import { resolveMainRuntimePaths } from "./runtime-paths";
 import {
   ANALYZE_INPUT_CHANNEL,
   AGENT_RUN_EVENT_CHANNEL,
@@ -63,6 +64,7 @@ let agentRuntime: AgentRuntime | undefined;
 const aiDrafts = new Map<string, ReturnType<AiConversationEngine["prepare"]>>();
 const aiRuns = new Map<string, AbortController>();
 const agentRuns = new Set<string>();
+const mainRuntimePaths = resolveMainRuntimePaths(import.meta.url);
 
 function getAiConversationEngine(): AiConversationEngine {
   if (aiConversationEngine) return aiConversationEngine;
@@ -98,7 +100,7 @@ function createWindow(): void {
     show: false,
     backgroundColor: "#f2f0e9",
     webPreferences: {
-      preload: join(__dirname, "../preload/index.mjs"),
+      preload: mainRuntimePaths.preload,
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true
@@ -115,7 +117,7 @@ function createWindow(): void {
   if (process.env.ELECTRON_RENDERER_URL) {
     void window.loadURL(process.env.ELECTRON_RENDERER_URL);
   } else {
-    void window.loadFile(join(__dirname, "../renderer/index.html"));
+    void window.loadFile(mainRuntimePaths.renderer);
   }
 }
 

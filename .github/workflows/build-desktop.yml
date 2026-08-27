@@ -94,6 +94,34 @@ jobs:
       - name: Build package
         run: ${{ matrix.command }}
 
+      - name: Smoke test packaged Linux renderer
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |-
+          set -euo pipefail
+          export XDG_CONFIG_HOME="${RUNNER_TEMP}/brainbuddy-smoke-profile"
+          mkdir -p "$XDG_CONFIG_HOME"
+          xvfb-run -a apps/desktop/release/linux-unpacked/brainbuddy \
+            --no-sandbox \
+            --remote-debugging-port=19222 \
+            > "${RUNNER_TEMP}/brainbuddy-smoke.log" 2>&1 &
+          app_pid=$!
+          trap 'kill "$app_pid" 2>/dev/null || true' EXIT
+          for attempt in {1..15}; do
+            targets=$(curl -fsS http://127.0.0.1:19222/json/list 2>/dev/null || true)
+            if printf "%s" "$targets" | grep -q "BrainBuddy Privacy Lab"; then
+              echo "Packaged renderer is ready"
+              exit 0
+            fi
+            if ! kill -0 "$app_pid" 2>/dev/null; then
+              cat "${RUNNER_TEMP}/brainbuddy-smoke.log"
+              exit 1
+            fi
+            sleep 1
+          done
+          cat "${RUNNER_TEMP}/brainbuddy-smoke.log"
+          exit 1
+
       - name: Verify macOS application signature and architecture
         if: runner.os == 'macOS'
         shell: bash
