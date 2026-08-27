@@ -55,18 +55,26 @@ jobs:
             files: apps/desktop/release/*.exe
           - name: macOS Apple Silicon
             runner: macos-15
-            command: npm run dist --workspace @brainbuddy/desktop -- --mac dmg zip --arm64
+            command: npm run dist --workspace @brainbuddy/desktop -- --mac dmg zip --arm64 -c.mac.identity=-
             artifact: brainbuddy-macos-arm64
+            app: apps/desktop/release/mac-arm64/brainbuddy.app
+            executable: apps/desktop/release/mac-arm64/brainbuddy.app/Contents/MacOS/brainbuddy
+            architecture: arm64
             files: |-
               apps/desktop/release/*.dmg
               apps/desktop/release/*.zip
+              docs/macos-unsigned-build.md
           - name: macOS Intel
             runner: macos-15-intel
-            command: npm run dist --workspace @brainbuddy/desktop -- --mac dmg zip --x64
+            command: npm run dist --workspace @brainbuddy/desktop -- --mac dmg zip --x64 -c.mac.identity=-
             artifact: brainbuddy-macos-x64
+            app: apps/desktop/release/mac/brainbuddy.app
+            executable: apps/desktop/release/mac/brainbuddy.app/Contents/MacOS/brainbuddy
+            architecture: x86_64
             files: |-
               apps/desktop/release/*.dmg
               apps/desktop/release/*.zip
+              docs/macos-unsigned-build.md
     runs-on: ${{ matrix.runner }}
     env:
       CSC_IDENTITY_AUTO_DISCOVERY: "false"
@@ -83,8 +91,16 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build unsigned package
+      - name: Build package
         run: ${{ matrix.command }}
+
+      - name: Verify macOS application signature and architecture
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |-
+          codesign --verify --deep --strict --verbose=2 "${{ matrix.app }}"
+          codesign --display --verbose=4 "${{ matrix.app }}"
+          lipo -archs "${{ matrix.executable }}" | grep -qw "${{ matrix.architecture }}"
 
       - name: Upload package
         uses: actions/upload-artifact@v7
