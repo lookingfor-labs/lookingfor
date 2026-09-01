@@ -7,9 +7,9 @@
   "dependencies": {
     "@brainbuddy/domain": "*",
     "@brainbuddy/memory-engine": "*",
-    "@earendil-works/pi-agent-core": "0.80.2",
-    "@earendil-works/pi-ai": "0.80.2",
-    "typebox": "1.1.38"
+    "@earendil-works/pi-agent-core": "0.84.4",
+    "@earendil-works/pi-ai": "0.84.4",
+    "typebox": "1.3.7"
   },
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json"

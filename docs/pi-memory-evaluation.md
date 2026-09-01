@@ -76,7 +76,7 @@ BrainBuddy 已有更通用的 Revision 与 revert，因此不应复制第二套 
 
 ### 1. 运行时接缝不兼容
 
-BrainBuddy 当前锁定 `@earendil-works/pi-agent-core@0.80.2` 与 `pi-ai@0.80.2`，自行注册 Agent 工具和控制 Run；项目没有 `pi-coding-agent`。`pi-memory@0.4.2` 则通过 `ExtensionAPI` 和 coding-agent 生命周期事件注入工具与系统提示，并要求 peer 版本至少为 0.81.1。
+BrainBuddy 当前锁定 `@earendil-works/pi-agent-core@0.84.4` 与 `pi-ai@0.84.4`，自行注册 Agent 工具和控制 Run；项目没有 `pi-coding-agent`。`pi-memory@0.4.2` 则通过 `ExtensionAPI` 和 coding-agent 生命周期事件注入工具与系统提示。当前 `pi-ai` 已满足其最低版本，但 `pi-coding-agent` 仍不存在，运行时接缝也依然不同。
 
 因此它不是传入当前 `createAgentRuntime()` 的一个 Store，也不能仅靠 `npm install pi-memory` 自动生效。为了加载原扩展而引入整个 coding-agent，会改变现有 Runtime 架构与依赖版本，不应与 Memory 搜索优化绑在一起。
 

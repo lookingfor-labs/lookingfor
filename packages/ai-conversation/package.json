@@ -6,7 +6,7 @@
   "exports": "./src/index.ts",
   "dependencies": {
     "@brainbuddy/domain": "*",
-    "@earendil-works/pi-ai": "0.80.2"
+    "@earendil-works/pi-ai": "0.84.4"
   },
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json"

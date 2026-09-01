@@ -24,7 +24,7 @@ BrainBuddy 当前已经具备：
 - Demo 04 通过 pi-ai 和 DeepSeek 完成一次流式调用；
 - Demo 04 能展示模型输入、原始回复、动作意图、Memory 修改提案和调用审计；
 - Demo 04 的 Memory 修改在模型调用结束后由用户确认执行；
-- Demo 05 已接入 pi-agent-core 0.80.2、DeepSeek、受控工具、审批门、Revision 与撤销界面；
+- Demo 05 已接入 pi-agent-core 0.84.4、DeepSeek、受控工具、审批门、Revision 与撤销界面；
 - `desktop-dev` 同时支持 Electron 和无图形会话下的浏览器验收。
 
 Demo 05 不应复制 Demo 04。二者的核心差异是：
@@ -367,7 +367,7 @@ interface AgentRunHandle {
 
 Protected Record 适配器只能产生 Safe DTO。数据库实体不能跨过该接缝进入 Agent Runtime；工具结果、事件、调试面板、审计、异常上下文和 Revision 元数据都只能从 Safe DTO 或 Memory DTO 构造。
 
-建议使用与当前 pi-ai 对齐的 `@earendil-works/pi-agent-core@0.80.2`，并使用顺序工具执行模式，以保证写入、审批和审计事件顺序确定。实现必须以 [`v0.80.2` 标签文档](https://github.com/earendil-works/pi/blob/v0.80.2/packages/agent/README.md)、实际类型、源码和定向测试为依据，不能直接按当前 main 文档或更新版本开发。升级 pi 依赖是独立决策，不与 Demo 05 实施绑定。
+当前使用相互对齐的 `@earendil-works/pi-agent-core@0.84.4` 与 `@earendil-works/pi-ai@0.84.4`，并使用顺序工具执行模式，以保证写入、审批和审计事件顺序确定。实现必须以 [`v0.84.4` 标签文档](https://github.com/earendil-works/pi/blob/v0.84.4/packages/agent/README.md)、实际类型、源码和定向测试为依据，不能直接按当前 main 文档或其他版本开发。后续升级仍须作为独立决策验证，不能与 Agent 功能变更混在同一升级单元中。
 
 ## 7. Run 预算
 
@@ -521,7 +521,7 @@ interface SafeToolError {
 - 实现 tool batch/调用/模型请求预算、取消、唯一 finish 与事件归一化；
 - 使用伪模型验证工具循环，不调用真实付费接口。
 
-完成标准：Agent 可以按需搜索、读取并完成回答，且越界工具、混合 finish、未知/未见引用和超预算请求被拒绝；定向测试证明行为符合 pi-agent-core `0.80.2`。
+完成标准：Agent 可以按需搜索、读取并完成回答，且越界工具、混合 finish、未知/未见引用和超预算请求被拒绝；定向测试证明行为符合 pi-agent-core `0.84.4`。
 
 ### 阶段 C：审批和自动写入
 
@@ -630,7 +630,7 @@ interface SafeToolError {
 
 1. MemoryVersion 使用 Revision 序号与内容哈希组成的 opaque version，Revision 使用独立 JSON ledger 持久化；
 2. Protected Record 只通过 Source/Credential Safe DTO 进入 Runtime；
-3. 使用 `v0.80.2` 实际 API 和伪模型固定 sequential batch、AbortSignal、terminate 与事件顺序行为；
+3. 使用 `v0.84.4` 实际 API 和伪模型固定 sequential batch、AbortSignal、terminate 与事件顺序行为；
 4. tool batch、工具调用、模型请求、finish 尝试分别计数，混合 finish batch 在执行前整体拒绝；
 5. 已覆盖符号链接、ABA、外部修改、歧义编辑、异常脱敏、迟到审批、取消和 Run Reference Set 回归测试；
 6. Revision Store 不可用时 Runtime 会在准备阶段拒绝 `auto_apply`；
