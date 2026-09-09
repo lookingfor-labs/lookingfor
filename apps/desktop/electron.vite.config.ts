@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import react from "@vitejs/plugin-react";
+import viteSvgr from "vite-plugin-svgr";
 import { defineConfig, externalizeDepsPlugin } from "electron-vite";
 
 export default defineConfig({
@@ -36,6 +37,6 @@ export default defineConfig({
         "@renderer": resolve("src/renderer/src")
       }
     },
-    plugins: [react()]
+    plugins: [react(), viteSvgr()]
   }
 });

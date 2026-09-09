@@ -1,7 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { MutableRefObject } from "react";
 import {
   ArrowClockwise,
   Brain,
+  CaretDown,
   CaretRight,
   ChatCircleDots,
   CheckCircle,
@@ -17,12 +19,18 @@ import {
   LockKey,
   LockOpen,
   MagnifyingGlass,
-  PaperPlaneRight,
+  Plus,
   ShieldCheck,
+  Sparkle,
   Trash,
   Warning,
   X
 } from "@phosphor-icons/react";
+import IcCancelSend from "@renderer/assets/icons/ic_cancelSend.svg?react";
+import IcHandwrite from "@renderer/assets/icons/ic_handwrite.svg?react";
+import IcSave from "@renderer/assets/icons/ic_save.svg?react";
+import IcSelectWord from "@renderer/assets/icons/ic_selectWord.svg?react";
+import IcSend from "@renderer/assets/icons/ic_send.svg?react";
 import type {
   DetectedEntity,
   DemoCredentialSummary,
@@ -31,6 +39,7 @@ import type {
   DemoSaveReceipt,
   DemoSourceReveal,
   DemoSourceSummary,
+  EntityType,
   MemoryFile,
   LocalStorageSettings,
   MemoryWritePolicy,
@@ -59,7 +68,7 @@ import {
   resolveAgentApproval,
   revealDemoSource,
   resetDatabase,
-  saveSuggestedProtectedText,
+  saveExplicitProtectedText,
   searchDemoSources,
   streamAgentRun,
   testModelConnection,
@@ -76,16 +85,126 @@ const navigation = [
   { id: "settings", label: "设置", icon: Gear }
 ] as const;
 
-const querySuggestions = ["最近保存的信息", "Figma", "设计账号", "AgentFlow", "GitHub"] as const;
+interface ChatMessage {
+  readonly id: number;
+  readonly role: "user" | "assistant";
+  readonly text: string;
+  readonly references?: readonly AgentReference[];
+}
+
+interface SaveFormState {
+  readonly keyword: string;
+  readonly secrets: readonly string[];
+  readonly note: string;
+}
+
+export function buildManualCapture(form: SaveFormState): {
+  readonly text: string;
+  readonly manual: readonly ManualSegment[];
+} {
+  let text = form.keyword.trim();
+  const manual: ManualSegment[] = [];
+  const secrets = form.secrets.map((secret) => secret.trim()).filter(Boolean);
+  secrets.forEach((secret, index) => {
+    text += `\n${secretFieldLabel(index)}：`;
+    const start = text.length;
+    text += secret;
+    manual.push({ start, end: text.length, entityType: "custom" });
+  });
+  if (form.note.trim()) text += `\n备注：${form.note.trim()}`;
+  return { text, manual };
+}
+
+const suggestionCards: readonly { readonly title: string; readonly example: string }[] = [
+  { title: "保存一个网站的账号密码", example: "帮我保存 GitHub 的账号密码" },
+  { title: "查找最近保存的信息", example: "最近保存的 DeepSeek API Key" },
+  { title: "查询我的某个账号密码", example: "帮我查询我的 Figma 账号密码" }
+];
+
+const secretOrdinal = ["二", "三", "四", "五", "六", "七", "八", "九", "十", "十一", "十二", "十三", "十四", "十五", "十六", "十七", "十八", "十九", "二十"];
+
+function secretFieldLabel(index: number): string {
+  if (index <= 0) return "保密信息";
+  return `保密信息${secretOrdinal[index - 1] ?? index + 1}`;
+}
+
+function manualEntityFromRange(text: string, start: number, end: number, type: EntityType = "custom", note = ""): DetectedEntity {
+  return {
+    text: text.slice(start, end),
+    start,
+    end,
+    type,
+    risk: "high",
+    reason: ["用户手动划词选择加密"],
+    suggestedPolicy: "move_to_vault",
+    recognizerId: "manual-selection",
+    ...(note.trim() ? { note: note.trim() } : {})
+  };
+}
+
+interface ManualMeta {
+  readonly type: EntityType;
+  readonly note: string;
+}
+
+type ManualSegment = NonNullable<ProtectionRequest["manual"]>[number];
+
+function toManualSegments(
+  ranges: readonly { readonly start: number; readonly end: number }[],
+  meta: Readonly<Record<string, ManualMeta>>
+): readonly ManualSegment[] {
+  return ranges.map(({ start, end }) => {
+    const details = meta[`${start}:${end}`];
+    return {
+      start,
+      end,
+      entityType: details?.type ?? "custom",
+      ...(details?.note.trim() ? { note: details.note.trim() } : {})
+    };
+  });
+}
+
+function mergedAnalysis(
+  engine: PrivacyAnalysis | undefined,
+  text: string,
+  ranges: readonly { readonly start: number; readonly end: number }[],
+  meta: Readonly<Record<string, ManualMeta>> = {}
+): PrivacyAnalysis | undefined {
+  if (!engine) return undefined;
+  if (!ranges.length) return engine;
+  const manual = ranges
+    .filter(({ start, end }) => end > start && end <= text.length)
+    .map(({ start, end }) => {
+      const details = meta[`${start}:${end}`];
+      return manualEntityFromRange(text, start, end, details?.type ?? "custom", details?.note);
+    });
+  const detected = engine.entities.filter((entity) => !manual.some((item) => item.start < entity.end && entity.start < item.end));
+  return { ...engine, entities: [...detected, ...manual].sort((left, right) => left.start - right.start) };
+}
+
+const EDIT_TYPE_OPTIONS: readonly { readonly value: EntityType; readonly label: string }[] = [
+  { value: "password", label: "密码" },
+  { value: "api_key", label: "API Key" },
+  { value: "email", label: "邮箱或账号" },
+  { value: "private_key", label: "私钥" },
+  { value: "github_token", label: "GitHub Token" },
+  { value: "jwt", label: "JWT" },
+  { value: "high_entropy_secret", label: "疑似密钥" },
+  { value: "person", label: "人物" },
+  { value: "company", label: "公司" },
+  { value: "project", label: "项目" },
+  { value: "custom", label: "自定义信息" }
+];
 
 export async function prepareMvpAgentRun(options: {
   readonly text: string;
   readonly writePolicy: MemoryWritePolicy;
   readonly decisions: ProtectionRequest["decisions"];
   readonly onSaved: () => void;
+  readonly manual?: ProtectionRequest["manual"];
   readonly prepare?: typeof prepareAgentRun;
 }): Promise<AgentRunDraft> {
-  const draft = await (options.prepare ?? prepareAgentRun)(options.text, options.writePolicy, options.decisions);
+  const draft = await (options.prepare ?? prepareAgentRun)(options.text, options.writePolicy, options.decisions, options.manual);
   options.onSaved();
   return draft;
 }
@@ -102,12 +221,12 @@ export function MvpApp({ onOpenDemo }: { readonly onOpenDemo: () => void }): JSX
 
   return <div className="mvp-app">
     <aside className="mvp-sidebar">
-      <button className="mvp-brand" type="button" onClick={() => setPage("home")} aria-label="返回 BrainBuddy 主页">
-        <span className="mvp-brand-mark">B</span><strong>BrainBuddy</strong>
+      <button className="mvp-brand" type="button" onClick={() => setPage("home")} aria-label="返回 lookingfor 主页">
+        <span className="mvp-brand-mark">L</span><strong>lookingfor</strong>
       </button>
       <nav aria-label="产品导航">
         {navigation.map(({ id, label, icon: Icon }) => <button key={id} type="button" className={page === id ? "active" : ""} onClick={() => setPage(id)}>
-          <Icon size={20} weight={page === id ? "fill" : "regular"} aria-hidden="true" /><span>{label}</span>
+          <Icon size={18} weight={page === id ? "fill" : "regular"} aria-hidden="true" /><span>{label}</span>
         </button>)}
       </nav>
       <div className="mvp-sidebar-foot">
@@ -130,6 +249,7 @@ function PageHeader({ title, copy }: { readonly title: string; readonly copy: st
 }
 
 function HomePage({ active, memoryWritePolicy, onSaved }: { readonly active: boolean; readonly memoryWritePolicy: MemoryWritePolicy; readonly onSaved: () => void }): JSX.Element {
+  const [mode, setMode] = useState<"auto" | "manual">("auto");
   const [question, setQuestion] = useState("");
   const [questionAnalysis, setQuestionAnalysis] = useState<PrivacyAnalysis>();
   const [questionPreview, setQuestionPreview] = useState<ProtectionPreview>();
@@ -137,19 +257,67 @@ function HomePage({ active, memoryWritePolicy, onSaved }: { readonly active: boo
   const [questionCredentialIds, setQuestionCredentialIds] = useState<Record<string, string>>({});
   const [isCheckingQuestion, setIsCheckingQuestion] = useState(false);
   const [questionProtectionError, setQuestionProtectionError] = useState<string>();
+  const [messages, setMessages] = useState<readonly ChatMessage[]>([]);
   const [runId, setRunId] = useState<string>();
   const [isRunning, setIsRunning] = useState(false);
-  const [answer, setAnswer] = useState<string>();
-  const [references, setReferences] = useState<readonly AgentReference[]>([]);
   const [revealedCredential, setRevealedCredential] = useState<DemoCredentialReveal>();
   const [revealingCredentialId, setRevealingCredentialId] = useState<string>();
   const [credentialRevealError, setCredentialRevealError] = useState<string>();
   const [approval, setApproval] = useState<PreparedMemoryWrite>();
   const [error, setError] = useState<string>();
-  const [saveForm, setSaveForm] = useState({ keyword: "Figma", account: "lu@example.com", secret: "", note: "UI 原型设计主账号" });
+  const [saveForm, setSaveForm] = useState<SaveFormState>({ keyword: "", secrets: [""], note: "" });
   const [isSaving, setIsSaving] = useState(false);
   const [receipt, setReceipt] = useState<DemoSaveReceipt>();
   const questionSequence = useRef(0);
+  const messageSequence = useRef(0);
+  const questionRef = useRef<HTMLTextAreaElement>(null);
+  const conversationRef = useRef<HTMLDivElement | null>(null) as MutableRefObject<HTMLDivElement | null>;
+  const conversationScrollRef = useRef(0);
+  const lastAutoScrollKey = useRef("");
+  const [manualRanges, setManualRanges] = useState<readonly { readonly start: number; readonly end: number }[]>([]);
+  const [manualMeta, setManualMeta] = useState<Readonly<Record<string, ManualMeta>>>({});
+  const [selection, setSelection] = useState<{ readonly start: number; readonly end: number }>();
+  const [toast, setToast] = useState<string>();
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  function showToast(message: string): void {
+    setToast(message);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(undefined), 3000);
+  }
+
+  useEffect(() => () => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+  }, []);
+
+  const conversationAttachRef = useCallback((element: HTMLDivElement | null) => {
+    conversationRef.current = element;
+    if (!element) return;
+    const key = `${messages.length}|${isRunning}|${approval?.approvalId ?? ""}`;
+    if (lastAutoScrollKey.current === key) {
+      // 模式切换导致对话区重新挂载：恢复之前的滚动位置
+      element.scrollTop = conversationScrollRef.current;
+    } else {
+      lastAutoScrollKey.current = key;
+      element.scrollTop = element.scrollHeight;
+      conversationScrollRef.current = element.scrollHeight;
+    }
+  }, [messages, isRunning, approval]);
+
+  useEffect(() => {
+    const element = conversationRef.current;
+    if (!element) return;
+    element.scrollTop = element.scrollHeight;
+    conversationScrollRef.current = element.scrollHeight;
+    lastAutoScrollKey.current = `${messages.length}|${isRunning}|${approval?.approvalId ?? ""}`;
+  }, [messages, isRunning, approval]);
+
+  useEffect(() => {
+    const element = questionRef.current;
+    if (!element) return;
+    element.style.height = "auto";
+    element.style.height = `${element.scrollHeight}px`;
+  }, [question, mode]);
 
   useEffect(() => {
     const sequence = ++questionSequence.current;
@@ -178,7 +346,7 @@ function HomePage({ active, memoryWritePolicy, onSaved }: { readonly active: boo
   async function analyzeQuestion(text: string, sequence: number): Promise<void> {
     try {
       const analysis = await analyzeInput(text);
-      const decisions = Object.fromEntries(analysis.entities.map((entity) => [questionEntityKey(entity), entity.suggestedPolicy]));
+      const decisions: Record<string, ProtectionPolicy> = Object.fromEntries(analysis.entities.map((entity) => [questionEntityKey(entity), "move_to_vault" as ProtectionPolicy]));
       const preview = await previewProtection({
         text,
         decisions: buildQuestionProtectionDecisions(analysis, decisions, {})
@@ -207,57 +375,132 @@ function HomePage({ active, memoryWritePolicy, onSaved }: { readonly active: boo
     setQuestionDecisions({});
     setQuestionCredentialIds({});
     setQuestionProtectionError(undefined);
+    setManualRanges([]);
+    setManualMeta({});
+    setSelection(undefined);
     setIsCheckingQuestion(Boolean(text.trim()));
   }
 
-  async function changeQuestionPolicy(entity: DetectedEntity, policy: ProtectionPolicy): Promise<void> {
+  async function saveEncryption(entity: DetectedEntity, next: { readonly start: number; readonly end: number; readonly text: string; readonly type: EntityType; readonly note: string }): Promise<void> {
     if (!questionAnalysis) return;
     const sequence = ++questionSequence.current;
     const text = question;
-    const decisions = { ...questionDecisions, [questionEntityKey(entity)]: policy };
-    setQuestionDecisions(decisions);
+    const oldKey = questionEntityKey(entity);
+    const newKey = `${next.start}:${next.end}`;
+    const isManualOld = manualRanges.some((range) => range.start === entity.start && range.end === entity.end);
+    const decisions = { ...questionDecisions };
+    const nextManual = [...manualRanges];
+    const nextMeta = { ...manualMeta };
+    if (newKey === oldKey) {
+      decisions[newKey] = "move_to_vault";
+      if (!isManualOld) nextManual.push({ start: next.start, end: next.end });
+      nextMeta[newKey] = { type: next.type, note: next.note };
+    } else {
+      if (isManualOld) {
+        const index = nextManual.findIndex((range) => range.start === entity.start && range.end === entity.end);
+        if (index >= 0) nextManual.splice(index, 1);
+        delete nextMeta[oldKey];
+      } else {
+        decisions[oldKey] = "keep_original";
+      }
+      nextManual.push({ start: next.start, end: next.end });
+      decisions[newKey] = "move_to_vault";
+      nextMeta[newKey] = { type: next.type, note: next.note };
+    }
     setIsCheckingQuestion(true);
     setQuestionProtectionError(undefined);
     try {
+      const merged = mergedAnalysis(questionAnalysis, text, nextManual, nextMeta);
       const preview = await previewProtection({
         text,
-        decisions: buildQuestionProtectionDecisions(questionAnalysis, decisions, questionCredentialIds)
+        decisions: merged ? buildQuestionProtectionDecisions(merged, decisions, questionCredentialIds) : [],
+        ...(nextManual.length ? { manual: toManualSegments(nextManual, nextMeta) } : {})
       });
       if (questionSequence.current !== sequence) return;
+      setManualRanges(nextManual);
+      setManualMeta(nextMeta);
+      setQuestionDecisions(decisions);
       setQuestionCredentialIds((current) => ({ ...current, ...questionCredentialIdsFrom(preview) }));
       setQuestionPreview(preview);
-    } catch {
-      if (questionSequence.current === sequence) setQuestionProtectionError("无法应用这项保护策略，请重新选择。");
+    } catch (cause) {
+      if (questionSequence.current === sequence) setQuestionProtectionError(messageFrom(cause));
     } finally {
       if (questionSequence.current === sequence) setIsCheckingQuestion(false);
     }
   }
 
+  async function removeEncryption(entity: DetectedEntity): Promise<void> {
+    if (!questionAnalysis) return;
+    const sequence = ++questionSequence.current;
+    const text = question;
+    const key = questionEntityKey(entity);
+    const isManual = manualRanges.some((range) => range.start === entity.start && range.end === entity.end);
+    const decisions: Record<string, ProtectionPolicy> = { ...questionDecisions, [key]: "keep_original" };
+    const nextManual = isManual ? manualRanges.filter((range) => !(range.start === entity.start && range.end === entity.end)) : manualRanges;
+    const nextMeta = { ...manualMeta };
+    if (isManual) delete nextMeta[key];
+    setIsCheckingQuestion(true);
+    setQuestionProtectionError(undefined);
+    try {
+      const merged = mergedAnalysis(questionAnalysis, text, nextManual, nextMeta);
+      const preview = await previewProtection({
+        text,
+        decisions: merged ? buildQuestionProtectionDecisions(merged, decisions, questionCredentialIds) : [],
+        ...(nextManual.length ? { manual: toManualSegments(nextManual, nextMeta) } : {})
+      });
+      if (questionSequence.current !== sequence) return;
+      setManualRanges(nextManual);
+      setManualMeta(nextMeta);
+      setQuestionDecisions(decisions);
+      setQuestionCredentialIds((current) => ({ ...current, ...questionCredentialIdsFrom(preview) }));
+      setQuestionPreview(preview);
+    } catch (cause) {
+      if (questionSequence.current === sequence) setQuestionProtectionError(messageFrom(cause));
+    } finally {
+      if (questionSequence.current === sequence) setIsCheckingQuestion(false);
+    }
+  }
+
+  const hasConversation = messages.length > 0 || isRunning;
+  const chatting = mode === "auto" && hasConversation;
+
   async function runAgent(): Promise<void> {
-    if (!question.trim() || !questionAnalysis || !questionPreview?.readyToSave || isCheckingQuestion) return;
+    const merged = mergedAnalysis(questionAnalysis, question, manualRanges, manualMeta);
+    if (!question.trim() || !merged || !questionPreview?.readyToSave || isCheckingQuestion || isRunning) return;
+    const text = question;
+    const decisions = buildQuestionProtectionDecisions(merged, questionDecisions, questionCredentialIds);
+    const sentManual = toManualSegments(manualRanges, manualMeta);
+    setMessages((current) => [...current, { id: ++messageSequence.current, role: "user", text }]);
+    updateQuestion("");
+    setRunId(undefined);
     setIsRunning(true);
-    setAnswer(undefined);
-    setReferences([]);
     setRevealedCredential(undefined);
     setCredentialRevealError(undefined);
     setApproval(undefined);
     setError(undefined);
     try {
       const draft = await prepareMvpAgentRun({
-        text: question,
+        text,
         writePolicy: memoryWritePolicy,
-        decisions: buildQuestionProtectionDecisions(questionAnalysis, questionDecisions, questionCredentialIds),
-        onSaved
+        decisions,
+        onSaved,
+        ...(sentManual.length ? { manual: sentManual } : {})
       });
       await streamAgentRun(draft.draftId, (event: AgentRuntimeEvent) => {
         setRunId(event.runId);
         if (event.type === "approval_required") setApproval(event.prepared);
         if (event.type === "approved" || event.type === "denied") setApproval(undefined);
         if (event.type === "agent_completed") {
-          setAnswer(event.result.message);
-          if (event.result.status === "completed") setReferences(event.result.references);
+          setMessages((current) => [...current, {
+            id: ++messageSequence.current,
+            role: "assistant",
+            text: event.result.message,
+            ...(event.result.status === "completed" ? { references: event.result.references } : {})
+          }]);
         }
-        if (event.type === "agent_failed" || event.type === "agent_cancelled") setAnswer(event.result.message);
+        if (event.type === "agent_failed" || event.type === "agent_cancelled") {
+          setMessages((current) => [...current, { id: ++messageSequence.current, role: "assistant", text: event.result.message }]);
+        }
       });
     } catch (cause) {
       setError(messageFrom(cause));
@@ -291,15 +534,16 @@ function HomePage({ active, memoryWritePolicy, onSaved }: { readonly active: boo
   }
 
   async function saveRecord(): Promise<void> {
-    if (!saveForm.keyword.trim() || !saveForm.secret.trim()) return;
+    const secrets = saveForm.secrets.map((secret) => secret.trim()).filter(Boolean);
+    if (!saveForm.keyword.trim() || !secrets.length) return;
     setIsSaving(true);
     setError(undefined);
     setReceipt(undefined);
-    const text = `${saveForm.keyword} 登录信息，账号是 ${saveForm.account || "未填写"}，密码是 ${saveForm.secret}。备注：${saveForm.note || "无"}`;
+    const { text, manual } = buildManualCapture({ ...saveForm, secrets });
     try {
-      const nextReceipt = await saveSuggestedProtectedText(text);
+      const nextReceipt = await saveExplicitProtectedText(text, manual);
       setReceipt(nextReceipt);
-      setSaveForm((current) => ({ ...current, secret: "" }));
+      setSaveForm((current) => ({ ...current, secrets: [""] }));
       onSaved();
     } catch (cause) {
       setError(messageFrom(cause));
@@ -308,72 +552,342 @@ function HomePage({ active, memoryWritePolicy, onSaved }: { readonly active: boo
     }
   }
 
-  return <div className="mvp-page">
-    <PageHeader title="BrainBuddy" copy="本地优先的隐私 AI 记忆管理，让重要信息只属于你。" />
-    {error && <p className="mvp-alert error" role="alert">{error}</p>}
-    <div className="mvp-stack">
-      <section className="mvp-card mvp-section">
-        <SectionTitle
-          icon={<ChatCircleDots size={21} weight="duotone" />}
-          title="和你的记忆对话"
-          copy={memoryWritePolicy === "require_approval"
-            ? "查询、整理或更新本地 Memory，写入前会征求你的同意。"
-            : "查询、整理或更新本地 Memory，Agent 可自动写入并保留 Revision。"}
-        />
-        <div className="mvp-chat-box">
-          <label htmlFor="mvp-question">给 BrainBuddy 的任务</label>
-          <textarea id="mvp-question" value={question} disabled={isRunning} onChange={(event) => updateQuestion(event.target.value)} placeholder="例如：帮我找到 Figma 账号，或记住我正在使用 AgentFlow。" />
-          <QuestionProtectionNotice analysis={questionAnalysis} preview={questionPreview} decisions={questionDecisions} isChecking={isCheckingQuestion} error={questionProtectionError} onPolicyChange={changeQuestionPolicy} />
-          <div className="mvp-chat-actions">
-            {isRunning && runId && <button className="mvp-secondary" type="button" onClick={() => void cancelAgentRun(runId)}>取消</button>}
-            <button className="mvp-primary" type="button" disabled={!question.trim() || !questionPreview?.readyToSave || isCheckingQuestion || Boolean(questionProtectionError) || isRunning} onClick={() => void runAgent()}>{isRunning ? "处理中" : isCheckingQuestion ? "检查中" : <><PaperPlaneRight size={17} weight="bold" />发送</>}</button>
-          </div>
-        </div>
-        <div className="mvp-suggestions">
-          <div className="mvp-mini-panel"><h3>试着问这些</h3><div className="mvp-chips">{querySuggestions.map((item) => <button key={item} type="button" onClick={() => updateQuestion(item)}>{item}</button>)}</div></div>
-          <div className="mvp-mini-panel mvp-answer" aria-live="polite"><h3>{answer ? "本轮结果" : "回答会显示在这里"}</h3>{answer ? <CredentialAwareAnswer text={answer} revealingCredentialId={revealingCredentialId} onReveal={revealAnswerCredential} /> : <p>BrainBuddy 会先检索本地 Memory 与受保护记录，只向模型发送必要的安全视图。</p>}{references.length > 0 && <div className="mvp-reference-list">{references.map((reference) => reference.kind === "credential" ? <button type="button" key={`${reference.kind}:${reference.id}`} disabled={revealingCredentialId === reference.id} onClick={() => void revealAnswerCredential(reference.id)}>[CREDENTIAL:{reference.id}]</button> : <code key={`${reference.kind}:${reference.id}`}>{reference.kind}: {reference.id}</code>)}</div>}{credentialRevealError && <p className="mvp-inline-error" role="alert">{credentialRevealError}</p>}{revealedCredential && <div className="mvp-credential-reveal" role="region" aria-label="已解锁的凭据明文"><div><strong>{questionEntityTypeLabel(revealedCredential.entityType)}明文</strong><button type="button" aria-label="关闭凭据明文" onClick={() => setRevealedCredential(undefined)}><X size={16} /></button></div><code>{revealedCredential.value}</code><small>仅在当前界面临时显示，不会发送给 AI。</small></div>}</div>
-        </div>
-        {approval && <div className="mvp-approval"><div><strong>允许写入 {approval.path}？</strong><span>{approval.reason}</span></div><pre>{approval.diff}</pre><div><button className="mvp-secondary" type="button" onClick={() => void decide("deny")}>拒绝</button><button className="mvp-primary" type="button" onClick={() => void decide("approve")}>批准写入</button></div></div>}
-      </section>
+  function switchMode(next: "auto" | "manual"): void {
+    if (next === mode) return;
+    setMode(next);
+    if (next === "manual") {
+      setSaveForm({ keyword: "", secrets: [""], note: "" });
+      setReceipt(undefined);
+      setError(undefined);
+    }
+  }
 
-      <section className="mvp-card mvp-section">
-        <SectionTitle icon={<LockKey size={21} weight="duotone" />} title="直接保存隐私记录" copy="原文与凭据保存在本地数据库，AI 只会看到受保护的引用。" />
-        <div className="mvp-form-grid">
-          <label htmlFor="record-keyword">关键词</label><input id="record-keyword" value={saveForm.keyword} onChange={(event) => setSaveForm({ ...saveForm, keyword: event.target.value })} />
-          <label htmlFor="record-account">账号</label><input id="record-account" value={saveForm.account} onChange={(event) => setSaveForm({ ...saveForm, account: event.target.value })} />
-          <label htmlFor="record-secret">保密信息</label><input id="record-secret" type="password" value={saveForm.secret} onChange={(event) => setSaveForm({ ...saveForm, secret: event.target.value })} placeholder="输入密码、Token 或 API Key" />
-          <label htmlFor="record-note">备注</label><input id="record-note" value={saveForm.note} onChange={(event) => setSaveForm({ ...saveForm, note: event.target.value })} />
+  function updateSecret(index: number, value: string): void {
+    setSaveForm((current) => ({ ...current, secrets: current.secrets.map((secret, i) => i === index ? value : secret) }));
+  }
+
+  function addSecretField(): void {
+    if (saveForm.secrets.length >= 20) return;
+    setSaveForm((current) => ({ ...current, secrets: [...current.secrets, ""] }));
+  }
+
+  function removeSecretField(index: number): void {
+    setSaveForm((current) => ({ ...current, secrets: current.secrets.length > 1 ? current.secrets.filter((_, i) => i !== index) : [""] }));
+  }
+
+  async function encryptSelection(): Promise<void> {
+    if (!selection || selection.end <= selection.start || isRunning || isCheckingQuestion) return;
+    const { start, end } = selection;
+    if (end > question.length) return;
+    const protectedRanges = [...(questionAnalysis?.entities ?? []), ...manualRanges];
+    if (protectedRanges.some((item) => item.start < end && start < item.end)) {
+      showToast("选中内容已在保护范围内，请选择其他文本。");
+      setSelection(undefined);
+      return;
+    }
+    const nextManual = [...manualRanges, { start, end }];
+    const key = `${start}:${end}`;
+    const nextMeta = { ...manualMeta, [key]: { type: "custom" as EntityType, note: "" } };
+    const nextDecisions = { ...questionDecisions, [key]: "move_to_vault" as ProtectionPolicy };
+    const sequence = ++questionSequence.current;
+    setIsCheckingQuestion(true);
+    setQuestionProtectionError(undefined);
+    setSelection(undefined);
+    try {
+      const merged = mergedAnalysis(questionAnalysis, question, nextManual, nextMeta);
+      const preview = await previewProtection({
+        text: question,
+        decisions: merged ? buildQuestionProtectionDecisions(merged, nextDecisions, questionCredentialIds) : [],
+        ...(nextManual.length ? { manual: toManualSegments(nextManual, nextMeta) } : {})
+      });
+      if (questionSequence.current !== sequence) return;
+      setManualRanges(nextManual);
+      setManualMeta(nextMeta);
+      setQuestionDecisions(nextDecisions);
+      setQuestionCredentialIds((current) => ({ ...current, ...questionCredentialIdsFrom(preview) }));
+      setQuestionPreview(preview);
+    } catch (cause) {
+      if (questionSequence.current === sequence) setQuestionProtectionError(messageFrom(cause));
+    } finally {
+      if (questionSequence.current === sequence) setIsCheckingQuestion(false);
+    }
+  }
+
+  const merged = mergedAnalysis(questionAnalysis, question, manualRanges, manualMeta);
+  const scratchReady = Boolean(selection && selection.end > selection.start && question.length > 0 && !isRunning && !isCheckingQuestion && (selection?.end ?? 0) <= question.length);
+
+  const canSendAuto = Boolean(question.trim()) && Boolean(questionPreview?.readyToSave) && !isCheckingQuestion && !questionProtectionError && !isRunning;
+  const showSuggestions = mode === "auto" && !hasConversation && !question.trim();
+
+  return <div className={`mvp-home ${chatting ? "chatting" : ""}`}>
+    {!chatting && <header className="mvp-home-hero">
+      <h1>lookingfor</h1>
+      <p>本地优先的隐私 AI 记忆管理，让重要信息只属于你</p>
+    </header>}
+    {toast && <div className="mvp-toast" role="status">{toast}</div>}
+    {error && <p className="mvp-alert error" role="alert">{error}</p>}
+
+    <div className={`mvp-home-content ${chatting ? "chatting" : ""}`}>
+    {mode === "auto" ? (
+      <>
+        {showSuggestions && (
+          <div className="mvp-suggestion-block" aria-label="试着问这些">
+            <span className="mvp-suggestion-label">试着问这些</span>
+            <div className="mvp-suggestion-row">
+              {suggestionCards.map((card) => <button key={card.title} type="button" className="mvp-suggestion-card" onClick={() => updateQuestion(card.example)}><strong>{card.title}</strong><span>例如：{card.example}</span></button>)}
+            </div>
+          </div>
+        )}
+        {hasConversation && <div className="mvp-conversation" ref={conversationAttachRef} onScroll={(event) => { conversationScrollRef.current = event.currentTarget.scrollTop; }} aria-live="polite" aria-label="对话内容">
+          {messages.map((message) => <MessageBubble key={message.id} message={message} revealingCredentialId={revealingCredentialId} revealedCredential={revealedCredential} credentialRevealError={credentialRevealError} onReveal={revealAnswerCredential} onCloseReveal={() => setRevealedCredential(undefined)} />)}
+          {isRunning && <div className="mvp-bubble assistant"><AssistantHeader /><div className="mvp-bubble-loading"><em>正在思考</em><span className="mvp-loading-dots"><i /><i /><i /></span></div></div>}
+        </div>}
+        {approval ? (
+          <section className="mvp-card mvp-approval-panel" role="alertdialog" aria-label="写入授权">
+            <header>
+              <span className="mvp-approval-icon"><LockKey size={18} weight="duotone" /></span>
+              <div><strong>允许写入 {approval.path}？</strong><small>{approval.reason}</small></div>
+            </header>
+            <pre>{approval.diff}</pre>
+            <footer>
+              <button className="mvp-secondary" type="button" onClick={() => void decide("deny")}>拒绝</button>
+              <button className="mvp-primary" type="button" onClick={() => void decide("approve")}>批准写入</button>
+            </footer>
+          </section>
+        ) : (
+          <section className="mvp-card mvp-composer">
+            <QuestionProtectionNotice analysis={merged} preview={questionPreview} decisions={questionDecisions} isChecking={isCheckingQuestion} error={questionProtectionError} text={question} onSaveEntity={saveEncryption} onRemoveEntity={removeEncryption} />
+            <div className="mvp-composer-body">
+            <textarea id="mvp-question" ref={questionRef} value={question} disabled={isRunning} onChange={(event) => updateQuestion(event.target.value)} onSelect={(event) => { const element = event.currentTarget; const start = element.selectionStart ?? 0; const end = element.selectionEnd ?? 0; setSelection(start === end ? undefined : { start: Math.min(start, end), end: Math.max(start, end) }); }} placeholder="输入你想记住或查询的内容" />
+            <div className="mvp-composer-bar">
+              <ModeToggle mode={mode} onSwitch={switchMode} />
+              <span className="mvp-scratch-wrap" aria-hidden={false}>
+                <button type="button" className={`mvp-scratch-lock ${scratchReady ? "ready" : ""}`} disabled={!scratchReady} onClick={() => void encryptSelection()}><IcSelectWord />划词加密</button>
+                {!scratchReady && <span className="mvp-scratch-tip" role="tooltip">输入框划取信息手动加密</span>}
+              </span>
+              <span className="mvp-composer-spacer" />
+              {isRunning
+                ? <button className="mvp-send mvp-primary" type="button" disabled={!runId} onClick={() => { if (runId) void cancelAgentRun(runId); }} aria-label="取消发送"><IcCancelSend /></button>
+                : <button className="mvp-send mvp-primary" type="button" disabled={!canSendAuto} onClick={() => void runAgent()} aria-label="发送"><IcSend /></button>}
+            </div>
+            </div>
+          </section>
+        )}
+      </>
+    ) : (
+      <section className="mvp-card mvp-composer mvp-manual">
+        {receipt && <div className="mvp-protect-banner safe" role="status"><CheckCircle size={18} weight="fill" /><span>已安全保存：Source {receipt.sourceId}，生成 {receipt.credentialIds.length} 个凭据引用，可在对话中让 Agent 整理到 Memory。</span></div>}
+        <div className="mvp-manual-body">
+        <div className="mvp-manual-fields">
+          <label className="mvp-field-row"><span className="mvp-field-name">关键词</span><div className="mvp-field-control"><input value={saveForm.keyword} onChange={(event) => setSaveForm({ ...saveForm, keyword: event.target.value })} placeholder="输入需要保密信息的关键词，方便索引" /></div></label>
+          {saveForm.secrets.map((secret, index) => (
+            <label className="mvp-field-row" key={index}>
+              <span className="mvp-field-name">{secretFieldLabel(index)}</span>
+              <div className="mvp-field-control">
+                <input type="password" value={secret} onChange={(event) => updateSecret(index, event.target.value)} placeholder="输入需要保密的信息" />
+                {index > 0 && <button type="button" className="mvp-field-remove" aria-label="删除这条保密信息" onClick={() => removeSecretField(index)}><X size={18} /></button>}
+              </div>
+            </label>
+          ))}
+          <div className="mvp-add-secret-row"><button type="button" className="mvp-add-secret" disabled={saveForm.secrets.length >= 20} onClick={addSecretField}><Plus size={13} weight="bold" />{saveForm.secrets.length >= 20 ? "最多添加 20 项" : "添加保密信息"}</button></div>
+          <label className="mvp-field-row"><span className="mvp-field-name">备注</span><div className="mvp-field-control"><input value={saveForm.note} onChange={(event) => setSaveForm({ ...saveForm, note: event.target.value })} placeholder="备注信息" /></div></label>
         </div>
-        <div className="mvp-save-row"><button className="mvp-primary" type="button" disabled={isSaving || !saveForm.keyword.trim() || !saveForm.secret.trim()} onClick={() => void saveRecord()}><FloppyDisk size={17} weight="bold" />{isSaving ? "正在保护并保存" : "保存到 BrainBuddy"}</button></div>
-        {receipt && <div className="mvp-save-note" role="status"><CheckCircle size={22} weight="fill" /><div><strong>已安全保存</strong><span>Source {receipt.sourceId}，生成 {receipt.credentialIds.length} 个凭据引用。你可以在对话中让 Agent 将引用整理到 Memory。</span></div></div>}
+        <div className="mvp-composer-bar">
+          <ModeToggle mode={mode} onSwitch={switchMode} />
+          <span className="mvp-composer-spacer" />
+          <button className="mvp-send mvp-primary" type="button" disabled={isSaving || !saveForm.keyword.trim() || !saveForm.secrets.some((secret) => secret.trim())} onClick={() => void saveRecord()} aria-label="保存"><IcSave /></button>
+        </div>
+        </div>
       </section>
+    )}
+    </div>
+
+    <footer className="mvp-home-footer">所有数据保存在本地知识库，调用 AI 时仅使用你确认后的脱敏内容</footer>
+  </div>;
+}
+
+function ModeToggle({ mode, onSwitch }: { readonly mode: "auto" | "manual"; readonly onSwitch: (mode: "auto" | "manual") => void }): JSX.Element {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (!open) return undefined;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [open]);
+  const options = [
+    { value: "auto", label: "自动判断", hint: "一句话查询或记忆，AI 自动理解意图" },
+    { value: "manual", label: "手动录入", hint: "直接保存一条隐私记录到本地" }
+  ] as const;
+  const label = mode === "auto" ? "自动判断" : "手动录入";
+  return <div className="mvp-mode-menu">
+    <button type="button" className="mvp-mode-toggle" onClick={() => setOpen((value) => !value)} aria-haspopup="menu" aria-expanded={open} title="切换输入方式">
+      {mode === "auto" ? <Sparkle size={15} weight="fill" /> : <IcHandwrite />}
+      <span>{label}</span>
+      <CaretDown size={12} />
+    </button>
+    {open && <>
+      <div className="mvp-mode-backdrop" onClick={() => setOpen(false)} />
+      <div className="mvp-mode-options" role="menu" aria-label="输入方式">
+        {options.map((option) => <button key={option.value} type="button" role="menuitem" className={mode === option.value ? "active" : ""} onClick={() => { onSwitch(option.value); setOpen(false); }}>
+          {option.value === "auto" ? <Sparkle size={16} weight="fill" /> : <IcHandwrite />}
+          <span><strong>{option.label}</strong><small>{option.hint}</small></span>
+          {mode === option.value && <CheckCircle size={16} weight="fill" />}
+        </button>)}
+      </div>
+    </>}
+  </div>;
+}
+
+function MessageBubble({ message, revealingCredentialId, revealedCredential, credentialRevealError, onReveal, onCloseReveal }: {
+  readonly message: ChatMessage;
+  readonly revealingCredentialId: string | undefined;
+  readonly revealedCredential: DemoCredentialReveal | undefined;
+  readonly credentialRevealError: string | undefined;
+  readonly onReveal: (credentialId: string) => Promise<void>;
+  readonly onCloseReveal: () => void;
+}): JSX.Element {
+  if (message.role === "user") {
+    return <div className="mvp-bubble user"><div className="mvp-bubble-body">{message.text}</div></div>;
+  }
+  return <div className="mvp-bubble assistant">
+    <AssistantHeader />
+    <div className="mvp-bubble-body">
+      <CredentialAwareAnswer text={message.text} revealingCredentialId={revealingCredentialId} onReveal={onReveal} />
+      {message.references && message.references.length > 0 && <div className="mvp-reference-list">{message.references.map((reference) => reference.kind === "credential" ? <button type="button" className="mvp-ref-chip" key={`${reference.kind}:${reference.id}`} disabled={revealingCredentialId === reference.id} onClick={() => void onReveal(reference.id)}>{reference.kind}: {reference.id}</button> : <span className="mvp-ref-chip" key={`${reference.kind}:${reference.id}`}>{reference.kind}: {reference.id}</span>)}</div>}
+      {credentialRevealError && <p className="mvp-inline-error" role="alert">{credentialRevealError}</p>}
+      {revealedCredential && <div className="mvp-credential-reveal" role="region" aria-label="已解锁的凭据明文"><div><strong>{questionEntityTypeLabel(revealedCredential.entityType)}明文</strong><button type="button" aria-label="关闭凭据明文" onClick={onCloseReveal}><X size={16} /></button></div><code>{revealedCredential.value}</code><small>仅在当前界面临时显示，不会发送给 AI。</small></div>}
     </div>
   </div>;
 }
 
-function QuestionProtectionNotice({ analysis, preview, decisions, isChecking, error, onPolicyChange }: {
+function AssistantHeader(): JSX.Element {
+  return <div className="mvp-bubble-head">
+    <div className="mvp-bubble-avatar"><strong>L</strong></div>
+    <span className="mvp-bubble-name">lookingfor</span>
+  </div>;
+}
+
+interface EditResult {
+  readonly start: number;
+  readonly end: number;
+  readonly text: string;
+  readonly type: EntityType;
+  readonly note: string;
+}
+
+function QuestionProtectionNotice({ analysis, preview, decisions, isChecking, error, text, onSaveEntity, onRemoveEntity }: {
   readonly analysis: PrivacyAnalysis | undefined;
   readonly preview: ProtectionPreview | undefined;
   readonly decisions: Readonly<Record<string, ProtectionPolicy>>;
   readonly isChecking: boolean;
   readonly error: string | undefined;
-  readonly onPolicyChange: (entity: DetectedEntity, policy: ProtectionPolicy) => Promise<void>;
+  readonly text: string;
+  readonly onSaveEntity: (entity: DetectedEntity, next: EditResult) => Promise<void>;
+  readonly onRemoveEntity: (entity: DetectedEntity) => Promise<void>;
 }): JSX.Element | null {
-  if (isChecking) return <div className="mvp-protection-state checking" role="status"><ShieldCheck size={17} weight="duotone" /><span>正在本地检查敏感信息</span></div>;
-  if (error) return <div className="mvp-protection-state error" role="alert"><Warning size={17} weight="duotone" /><span>{error}</span></div>;
-  if (!analysis || !preview) return null;
-  if (!analysis.entities.length) return <div className="mvp-protection-state safe" role="status"><ShieldCheck size={17} weight="fill" /><span>本地检查完成，未发现需要保护的字段</span></div>;
+  const [editing, setEditing] = useState<DetectedEntity>();
+  const [value, setValue] = useState("");
+  const [type, setType] = useState<EntityType>("custom");
+  const [note, setNote] = useState("");
+  const [sel, setSel] = useState<{ readonly start: number; readonly end: number }>();
+  const [applying, setApplying] = useState(false);
 
-  const keptCount = analysis.entities.filter((entity) => decisions[questionEntityKey(entity)] === "keep_original").length;
-  return <section className="mvp-protection-notice" aria-label="本地保护提示">
-    <header><Warning size={19} weight="duotone" /><div><strong>检测到 {analysis.entities.length} 个敏感字段</strong><span>{keptCount ? `${keptCount} 个字段会保留原文并发送给 AI。` : "默认抽离为凭据，原文不会发送给 AI。"}</span></div></header>
-    <div className="mvp-protection-entities">{analysis.entities.map((entity) => {
-      const key = questionEntityKey(entity);
-      const selected = decisions[key] ?? entity.suggestedPolicy;
-      return <div className="mvp-protection-entity" key={key}><div><span>{questionEntityTypeLabel(entity.type)} · {questionRiskLabel(entity.risk)}风险</span><code>{maskQuestionEntity(entity.text)}</code></div><div className="mvp-protection-policy" role="group" aria-label={`${questionEntityTypeLabel(entity.type)}保护策略`}><button type="button" aria-pressed={selected === "keep_original"} onClick={() => void onPolicyChange(entity, "keep_original")}>保留原文</button><button type="button" aria-pressed={selected === "move_to_vault"} onClick={() => void onPolicyChange(entity, "move_to_vault")}>抽离为凭据</button></div></div>;
-    })}</div>
-    <div className="mvp-protection-preview"><span>AI 可见版本</span><code>{preview.protectedContent}</code></div>
+  useEffect(() => {
+    if (editing) {
+      setValue(editing.text);
+      setType(editing.type);
+      setNote(editing.note ?? "");
+      setSel(undefined);
+    }
+  }, [editing]);
+
+  useEffect(() => {
+    if (!editing) return undefined;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setEditing(undefined);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [editing]);
+
+  if (isChecking) return <div className="mvp-protect-banner checking" role="status"><ShieldCheck size={18} weight="duotone" /><span>正在本地检查敏感信息</span></div>;
+  if (error) return <div className="mvp-protect-banner error" role="alert"><Warning size={18} weight="duotone" /><span>{error}</span></div>;
+  if (!analysis || !preview) return null;
+
+  const visible = analysis.entities.filter((entity) => (decisions[questionEntityKey(entity)] ?? entity.suggestedPolicy) !== "keep_original");
+  if (!analysis.entities.length) return <div className="mvp-protect-banner safe" role="status"><ShieldCheck size={18} weight="fill" /><span>本地检查完成，未发现需要保护的字段</span></div>;
+  if (!visible.length) return null;
+
+  return <section className="mvp-protect-panel" aria-label="本地保护提示">
+    <header>
+      <span className="mvp-protect-panel-icon"><Warning size={20} weight="duotone" /></span>
+      <div>
+        <strong>检测到 {visible.length} 个敏感字段</strong>
+        <small>默认抽离为凭据，原文不会发送给 AI，可点击进行加密设置。</small>
+      </div>
+    </header>
+    <div className="mvp-protect-entities">
+      {visible.map((entity) => {
+        const key = questionEntityKey(entity);
+        const credential = preview.credentials.find((item) => item.start === entity.start && item.end === entity.end);
+        return <button key={key} type="button" className="mvp-protect-entity vault" onClick={() => setEditing(entity)} title="点击编辑加密方式">
+          <span className="mvp-protect-entity-badge"><em>{questionEntityTypeLabel(entity.type)}</em><code>{entity.text}</code></span>
+          <span className="mvp-protect-ai-view">AI 可见版本 <code>{credential ? credential.ref : entity.text}</code></span>
+        </button>;
+      })}
+    </div>
+
+    {editing && <div className="mvp-protect-modal">
+      <div className="mvp-protect-modal-backdrop" onClick={() => setEditing(undefined)} />
+      <div className="mvp-protect-modal-card mvp-edit-card" role="dialog" aria-modal="true" aria-label="编辑识别项">
+        <header className="mvp-edit-head"><strong>编辑识别项</strong><button type="button" aria-label="关闭" onClick={() => setEditing(undefined)}><X size={18} /></button></header>
+        <div className="mvp-edit-fields">
+          <div className="mvp-edit-row"><span className="mvp-edit-label">识别值</span><input autoFocus value={value} onChange={(event) => setValue(event.target.value)} placeholder="识别值" /></div>
+          <div className="mvp-edit-row"><span className="mvp-edit-label">脱敏类型</span><div className="mvp-edit-select"><select value={type} onChange={(event) => setType(event.target.value as EntityType)} aria-label="脱敏类型">{EDIT_TYPE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select><CaretDown size={14} /></div></div>
+          <div className="mvp-edit-row"><span className="mvp-edit-label">备注</span><input value={note} onChange={(event) => setNote(event.target.value)} placeholder="备注信息" /></div>
+          <div className="mvp-edit-row"><span className="mvp-edit-label">脱敏后</span><div className="mvp-masked-chip"><code>{preview.credentials.find((item) => item.start === editing.start && item.end === editing.end)?.ref ?? "-"}</code></div></div>
+        </div>
+        <div className="mvp-original">
+          <span>原文(在下方划动选择一段文本，自动作为识别值)</span>
+          <textarea readOnly value={text} onSelect={(event) => { const element = event.currentTarget; const s = element.selectionStart ?? 0; const e = element.selectionEnd ?? 0; if (s !== e) { setSel({ start: s, end: e }); setValue(text.slice(s, e)); } }} />
+        </div>
+        <footer className="mvp-edit-actions">
+          <button type="button" className="mvp-remove-enc" disabled={applying} onClick={() => void removeEncryptionItem()}>移除加密</button>
+          <button type="button" className="mvp-cancel-enc" onClick={() => setEditing(undefined)}>取消</button>
+          <button type="button" className="mvp-save-enc" disabled={applying} onClick={() => void saveEncryptionItem()}>保存更改</button>
+        </footer>
+      </div>
+    </div>}
   </section>;
+
+  async function saveEncryptionItem(): Promise<void> {
+    if (!editing) return;
+    const range = sel ?? { start: editing.start, end: editing.end };
+    const resolvedText = sel ? text.slice(range.start, range.end) : editing.text;
+    setApplying(true);
+    try {
+      await onSaveEntity(editing, { start: range.start, end: range.end, text: resolvedText, type, note });
+      setEditing(undefined);
+    } catch {
+      // 错误信息由上层 saveEncryption 回显
+    } finally {
+      setApplying(false);
+    }
+  }
+  async function removeEncryptionItem(): Promise<void> {
+    if (!editing) return;
+    setApplying(true);
+    try {
+      await onRemoveEntity(editing);
+      setEditing(undefined);
+    } catch {
+      // 错误信息由上层 removeEncryption 回显
+    } finally {
+      setApplying(false);
+    }
+  }
 }
 
 export type CredentialTextPart =
@@ -496,7 +1010,7 @@ function DatabasePage({ refreshToken }: { readonly refreshToken: number }): JSX.
         ? <LoadingState label="正在读取本地记录" />
         : visibleSources.length
           ? <div className="mvp-table-wrap"><table><thead><tr><th>Source</th><th>类型</th><th>安全视图</th><th>凭据</th><th>保存时间</th></tr></thead><tbody>{visibleSources.map((source) => <tr key={source.sourceId} tabIndex={0} aria-selected={source.sourceId === selectedId} className={source.sourceId === selectedId ? "selected" : ""} onClick={() => { setSelectedId(source.sourceId); setRevealed(undefined); }} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSelectedId(source.sourceId); setRevealed(undefined); } }}><td><code>{source.sourceId}</code></td><td>{sourceKind(source.kind)}</td><td className="mvp-protected-cell">{source.protectedContent}</td><td>{source.credentialIds.length}</td><td>{formatTime(source.savedAt)}</td></tr>)}</tbody></table></div>
-          : <EmptyState icon={activeTab === "saved" ? <FloppyDisk size={30} /> : <ChatCircleDots size={30} />} title={query.trim() ? "当前分类没有匹配记录" : activeTab === "saved" ? "还没有保存的信息" : "还没有 AI 对话记录"} copy={query.trim() ? "可以调整搜索条件，或切换另一个分类查看。" : activeTab === "saved" ? "回到主页直接保存一条隐私信息，记录会显示在这里。" : "在主页与 BrainBuddy 对话后，本轮 Source 会显示在这里。"} />}
+          : <EmptyState icon={activeTab === "saved" ? <FloppyDisk size={30} /> : <ChatCircleDots size={30} />} title={query.trim() ? "当前分类没有匹配记录" : activeTab === "saved" ? "还没有保存的信息" : "还没有 AI 对话记录"} copy={query.trim() ? "可以调整搜索条件，或切换另一个分类查看。" : activeTab === "saved" ? "回到主页直接保存一条隐私信息，记录会显示在这里。" : "在主页与 lookingfor 对话后，本轮 Source 会显示在这里。"} />}
       {selected && <div className="mvp-source-detail"><div><h2>{sourceKind(selected.kind)}记录</h2><dl><dt>Source ID</dt><dd><code>{selected.sourceId}</code></dd><dt>AI 安全视图</dt><dd>{selected.protectedContent}</dd><dt>关联凭据</dt><dd>{linkedCredentials.length ? linkedCredentials.map((credential) => <code key={credential.credentialId}>[CREDENTIAL:{credential.credentialId}]</code>) : "无"}</dd></dl></div><div className="mvp-secret-panel"><div><span>用户输入原文</span>{revealed && <button type="button" aria-label="关闭原文" onClick={() => setRevealed(undefined)}><X size={18} /></button>}</div>{revealed ? <pre>{revealed.originalContent}</pre> : <><LockKey size={28} weight="duotone" /><p>原文不会发送给 AI。点击后只在当前界面临时显示。</p><button className="mvp-secondary" type="button" onClick={() => void reveal()}><Eye size={17} />手动查看原文</button></>}</div></div>}
     </section>
   </div>;
@@ -669,7 +1183,7 @@ function SettingsPage({ runtimeSettings, onRuntimeSettingsChange }: {
     <PageHeader title="设置" copy="管理本地存储访问、模型连接和隐私边界。" />
     {message && <p className={`mvp-alert ${message.tone}`} role={message.tone === "error" ? "alert" : "status"}>{message.text}</p>}
     <div className="mvp-settings-grid">
-      <section className="mvp-card mvp-setting-card mvp-storage-settings"><div className="mvp-setting-icon"><Folder size={22} weight="duotone" /></div><div><h2>本地存储位置</h2><p>分别配置受控 Markdown 根目录和 SQLite 数据库目录；必须填写绝对路径。</p><form className="mvp-storage-form" onSubmit={(event) => void saveStorageSettings(event)}><label>本地记忆目录<input value={storageForm.memoryDirectory} required onChange={(event) => setStorageForm({ ...storageForm, memoryDirectory: event.target.value })} placeholder="例如 /Users/you/BrainBuddy/memories" /></label><label>数据库文件目录<input value={storageForm.databaseDirectory} required onChange={(event) => setStorageForm({ ...storageForm, databaseDirectory: event.target.value })} placeholder="例如 /Users/you/BrainBuddy/database" /></label><div className="mvp-form-actions"><button className="mvp-primary" type="submit" disabled={isSavingStorage || !storageForm.memoryDirectory.trim() || !storageForm.databaseDirectory.trim()}>{isSavingStorage ? "切换中" : "保存存储位置"}</button></div></form><p className="mvp-field-note">保存时会创建不存在的目录并立即切换；不会自动搬移旧目录中的数据。</p></div></section>
+      <section className="mvp-card mvp-setting-card mvp-storage-settings"><div className="mvp-setting-icon"><Folder size={22} weight="duotone" /></div><div><h2>本地存储位置</h2><p>分别配置受控 Markdown 根目录和 SQLite 数据库目录；必须填写绝对路径。</p><form className="mvp-storage-form" onSubmit={(event) => void saveStorageSettings(event)}><label>本地记忆目录<input value={storageForm.memoryDirectory} required onChange={(event) => setStorageForm({ ...storageForm, memoryDirectory: event.target.value })} placeholder="例如 /Users/you/lookingfor/memories" /></label><label>数据库文件目录<input value={storageForm.databaseDirectory} required onChange={(event) => setStorageForm({ ...storageForm, databaseDirectory: event.target.value })} placeholder="例如 /Users/you/lookingfor/database" /></label><div className="mvp-form-actions"><button className="mvp-primary" type="submit" disabled={isSavingStorage || !storageForm.memoryDirectory.trim() || !storageForm.databaseDirectory.trim()}>{isSavingStorage ? "切换中" : "保存存储位置"}</button></div></form><p className="mvp-field-note">保存时会创建不存在的目录并立即切换；不会自动搬移旧目录中的数据。</p></div></section>
       <section className="mvp-card mvp-setting-card mvp-model-settings"><div className="mvp-setting-icon"><Key size={22} weight="duotone" /></div><div><div className="mvp-setting-heading"><div><h2>AI 连接</h2><p>连接信息由本地后端加密保存。API 地址可指向 DeepSeek 或兼容的中转服务。</p></div><span className={`mvp-status-pill ${modelConnection?.configured ? "unlocked" : "unset"}`}>{modelConnection?.configured ? "已配置" : "尚未配置"}</span></div><form className="mvp-model-form" onSubmit={(event) => void saveModelConnection(event)}><label className="mvp-model-url">API 地址<input type="url" value={modelForm.baseUrl} required maxLength={2000} onChange={(event) => setModelForm({ ...modelForm, baseUrl: event.target.value })} placeholder="https://api.deepseek.com" /></label><label>模型名称<input value={modelForm.modelId} required maxLength={100} onChange={(event) => setModelForm({ ...modelForm, modelId: event.target.value })} placeholder="deepseek-v4-flash" /></label><label className="mvp-model-key">API Key<input type="password" autoComplete="new-password" minLength={8} maxLength={512} required value={modelForm.apiKey} onChange={(event) => setModelForm({ ...modelForm, apiKey: event.target.value })} placeholder={modelConnection?.maskedApiKey ? `当前 ${modelConnection.maskedApiKey}，输入新 Key 可替换` : "输入 API Key"} /></label><div className="mvp-form-actions"><button className="mvp-secondary" type="button" disabled={isTestingModel || isSavingModel || !modelForm.baseUrl.trim() || !modelForm.modelId.trim() || (modelForm.apiKey.trim().length > 0 && modelForm.apiKey.trim().length < 8) || (!modelConnection?.configured && modelForm.apiKey.trim().length < 8)} onClick={() => void checkModelConnection()}><CheckCircle size={16} />{isTestingModel ? "测试中" : "测试连接"}</button><button className="mvp-primary" type="submit" disabled={isSavingModel || isTestingModel || modelForm.apiKey.trim().length < 8 || !modelForm.baseUrl.trim() || !modelForm.modelId.trim()}>{isSavingModel ? "保存中" : modelConnection?.configured ? "更新连接" : "保存连接"}</button></div></form><p className="mvp-field-note">测试连接会发送内容为“1”的请求并将输出限制为 1 token；Key 留空时使用已保存的连接。默认地址为 DeepSeek API，默认模型为 deepseek-v4-flash。</p></div></section>
       <section className="mvp-card mvp-setting-card mvp-password-settings"><div className="mvp-setting-icon"><LockKey size={22} weight="duotone" /></div><div><div className="mvp-setting-heading"><div><h2>数据库访问密码</h2><p>用于解锁原文查看和数据库重置；它不会替代独立的本机加密密钥。</p></div><span className={`mvp-status-pill ${access?.passwordConfigured ? (access.unlocked ? "unlocked" : "locked") : "unset"}`}>{access?.passwordConfigured ? (access.unlocked ? "已设置 · 已解锁" : "已设置 · 已锁定") : "尚未设置"}</span></div><form className="mvp-password-form" onSubmit={(event) => void savePassword(event)}>{access?.passwordConfigured && <label>当前密码<input type="password" autoComplete="current-password" required value={passwords.current} onChange={(event) => setPasswords({ ...passwords, current: event.target.value })} /></label>}<label>新密码<input type="password" autoComplete="new-password" minLength={8} maxLength={128} required value={passwords.next} onChange={(event) => setPasswords({ ...passwords, next: event.target.value })} placeholder="至少 8 个字符" /></label><label>确认新密码<input type="password" autoComplete="new-password" minLength={8} maxLength={128} required value={passwords.confirm} onChange={(event) => setPasswords({ ...passwords, confirm: event.target.value })} /></label><div className="mvp-form-actions">{access?.passwordConfigured && access.unlocked && <button className="mvp-secondary" type="button" onClick={() => void lockNow()}><LockKey size={16} />立即锁定</button>}<button className="mvp-primary" type="submit" disabled={isSavingPassword || passwords.next.length < 8 || passwords.confirm.length < 8}>{isSavingPassword ? "保存中" : access?.passwordConfigured ? "更新密码" : "设置密码"}</button></div></form><p className="mvp-field-note">忘记此密码后无法从界面查看原文或清库。密码校验信息会持久化在当前运行模式的本地数据目录。</p></div></section>
       <section className="mvp-card mvp-setting-card mvp-security-settings"><div className="mvp-setting-icon"><ShieldCheck size={22} weight="duotone" /></div><div><h2>隐私与安全</h2><p>这些规则由运行时强制执行，不依赖模型自行遵守。</p><div className="mvp-policy-row mvp-policy-control"><div><strong>Memory 写入方式</strong><span>自动写入仍限制在 Memory 根目录，并为每次修改保存 Revision。</span></div><select aria-label="Memory 写入方式" value={runtimeSettings?.memoryWritePolicy ?? "require_approval"} disabled={!runtimeSettings} onChange={(event) => void changeMemoryWritePolicy(event.target.value as MemoryWritePolicy)}><option value="require_approval">每次需要批准</option><option value="auto_apply">允许 Agent 自动写入</option></select></div><div className="mvp-policy-row"><div><strong>凭据明文不发送给 AI</strong><span>Agent 只接收 Credential ID 和掩码。</span></div><CheckCircle size={22} weight="fill" /></div><div className="mvp-policy-row"><div><strong>受控 Memory 根目录</strong><span>路径逃逸和符号链接会被拒绝。</span></div><CheckCircle size={22} weight="fill" /></div></div></section>
@@ -732,7 +1246,8 @@ function questionEntityTypeLabel(type: DetectedEntity["type"]): string {
     high_entropy_secret: "疑似密钥",
     person: "人物",
     company: "公司",
-    project: "项目"
+    project: "项目",
+    custom: "自定义信息"
   } as const)[type];
 }
 

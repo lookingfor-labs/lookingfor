@@ -8,6 +8,7 @@ import type {
   DemoOfflineSearchResult,
   DemoSaveReceipt,
   DemoSourceReveal,
+  DetectedEntity,
   ModelConnectionStatus,
   ProtectionDecision,
   ProtectionPreview,
@@ -78,12 +79,12 @@ export class LocalBackend {
     return this.#privacy.analyze(text);
   }
 
-  preview(text: string, decisions: readonly ProtectionDecision[]): ProtectionPreview {
-    return toProtectionPreview(this.#plan(text, decisions));
+  preview(text: string, decisions: readonly ProtectionDecision[], manual: readonly ManualSegmentRange[] = []): ProtectionPreview {
+    return toProtectionPreview(this.#plan(text, decisions, manual));
   }
 
-  save(text: string, decisions: readonly ProtectionDecision[], kind: SourceSubmissionKind = "capture"): DemoSaveReceipt {
-    return this.#sources.save(this.#plan(text, decisions), text, kind);
+  save(text: string, decisions: readonly ProtectionDecision[], kind: SourceSubmissionKind = "capture", manual: readonly ManualSegmentRange[] = []): DemoSaveReceipt {
+    return this.#sources.save(this.#plan(text, decisions, manual), text, kind);
   }
 
   saveSuggested(text: string, kind: SourceSubmissionKind = "conversation"): DemoSaveReceipt {
@@ -126,10 +127,46 @@ export class LocalBackend {
     this.#sources.close();
   }
 
-  #plan(text: string, decisions: readonly ProtectionDecision[]) {
+  #plan(text: string, decisions: readonly ProtectionDecision[], manual: readonly ManualSegmentRange[] = []) {
     const analysis = this.#privacy.analyze(text);
-    return buildProtectionPlan({ text, entities: analysis.entities, decisions, credentialIdFactory: randomUUID });
+    const entities = mergeManualEntities(text, analysis.entities, manual);
+    return buildProtectionPlan({ text, entities, decisions, credentialIdFactory: randomUUID });
   }
+}
+
+export interface ManualSegmentRange {
+  readonly start: number;
+  readonly end: number;
+  readonly entityType: DetectedEntity["type"];
+  readonly note?: string | undefined;
+}
+
+function mergeManualEntities(text: string, detected: readonly DetectedEntity[], manual: readonly ManualSegmentRange[]): readonly DetectedEntity[] {
+  if (!manual.length) return detected;
+  const sorted = [...manual].sort((left, right) => left.start - right.start);
+  sorted.forEach(({ start, end }, index) => {
+    if (end <= start || end > text.length) throw new Error("Manual protection range is invalid");
+    const previous = sorted[index - 1];
+    if (previous && previous.end > start) throw new Error("Manual protection ranges cannot overlap");
+  });
+  const manualEntities: DetectedEntity[] = sorted
+    .map(({ start, end, entityType, note }) => ({
+      text: text.slice(start, end),
+      start,
+      end,
+      type: entityType,
+      risk: "high" as const,
+      reason: note ? ["用户手动划词选择加密", note] : ["用户手动划词选择加密"],
+      suggestedPolicy: "move_to_vault" as const,
+      recognizerId: "manual-selection",
+      ...(note ? { note } : {})
+    }));
+  const resolvedDetected = detected.filter((entity) => !manualEntities.some((manualEntity) => rangesOverlap(entity.start, entity.end, manualEntity.start, manualEntity.end)));
+  return [...resolvedDetected, ...manualEntities].sort((left, right) => left.start - right.start);
+}
+
+function rangesOverlap(aStart: number, aEnd: number, bStart: number, bEnd: number): boolean {
+  return aStart < bEnd && bStart < aEnd;
 }
 
 function loadEncryptionKey(dataDirectory: string): Buffer {

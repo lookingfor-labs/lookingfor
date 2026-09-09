@@ -148,12 +148,12 @@ app.whenReady().then(() => {
     return localBackend!.analyze(text);
   });
   ipcMain.handle(PREVIEW_PROTECTION_CHANNEL, (_event, request: unknown) => {
-    const { text, decisions } = ProtectionRequestSchema.parse(request);
-    return localBackend!.preview(text, decisions);
+    const { text, decisions, manual } = ProtectionRequestSchema.parse(request);
+    return localBackend!.preview(text, decisions, manual);
   });
   ipcMain.handle(SAVE_DEMO_CANDIDATE_CHANNEL, (_event, request: unknown) => {
-    const { text, decisions } = ProtectionRequestSchema.parse(request);
-    return localBackend!.save(text, decisions, "capture");
+    const { text, decisions, manual } = ProtectionRequestSchema.parse(request);
+    return localBackend!.save(text, decisions, "capture", manual);
   });
   ipcMain.handle(SEARCH_DEMO_SOURCES_CHANNEL, (_event, request: unknown) => {
     const { query } = SearchDemoSourcesRequestSchema.parse(request);
@@ -230,9 +230,9 @@ app.whenReady().then(() => {
     return localBackend!.memories.apply(operation);
   });
   ipcMain.handle(PREPARE_AGENT_RUN_CHANNEL, (_event, request: unknown) => {
-    const { text, writePolicy, decisions } = PrepareAgentRunRequestSchema.parse(request);
+    const { text, writePolicy, decisions, manual } = PrepareAgentRunRequestSchema.parse(request);
     const receipt = decisions
-      ? localBackend!.save(text, decisions, "conversation")
+      ? localBackend!.save(text, decisions, "conversation", manual)
       : localBackend!.saveSuggested(text, "conversation");
     return getAgentRuntime().prepare({
       message: receipt.preview.protectedContent,

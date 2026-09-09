@@ -82,12 +82,12 @@ export function aiConversationMiddleware(options: {
             return sendJson(response, 200, backend.analyze(text));
           }
           if (request.url === "/api/privacy/preview") {
-            const { text, decisions } = ProtectionRequestSchema.parse(await readJson(request));
-            return sendJson(response, 200, backend.preview(text, decisions));
+            const { text, decisions, manual } = ProtectionRequestSchema.parse(await readJson(request));
+            return sendJson(response, 200, backend.preview(text, decisions, manual));
           }
           if (request.url === "/api/database/save") {
-            const { text, decisions } = ProtectionRequestSchema.parse(await readJson(request));
-            return sendJson(response, 200, backend.save(text, decisions, "capture"));
+            const { text, decisions, manual } = ProtectionRequestSchema.parse(await readJson(request));
+            return sendJson(response, 200, backend.save(text, decisions, "capture", manual));
           }
           if (request.url === "/api/database/search") {
             const { query } = SearchDemoSourcesRequestSchema.parse(await readJson(request));
@@ -152,7 +152,7 @@ export function aiConversationMiddleware(options: {
           if (request.url === "/api/agent/prepare") {
             const input = PrepareAgentRunRequestSchema.parse(await readJson(request));
             const receipt = input.decisions
-              ? backend.save(input.text, input.decisions, "conversation")
+              ? backend.save(input.text, input.decisions, "conversation", input.manual)
               : backend.saveSuggested(input.text, "conversation");
             return sendJson(response, 200, getAgentRuntime().prepare({
               message: receipt.preview.protectedContent,

@@ -1,6 +1,6 @@
 import type { PrivacyAnalysis } from "@brainbuddy/domain";
 import { describe, expect, it } from "vitest";
-import { buildQuestionProtectionDecisions, prepareMvpAgentRun } from "./MvpApp";
+import { buildManualCapture, buildQuestionProtectionDecisions, prepareMvpAgentRun } from "./MvpApp";
 
 describe("MVP question protection", () => {
   it("refreshes database records immediately after the conversation Source is persisted", async () => {
@@ -58,5 +58,23 @@ describe("MVP question protection", () => {
       policy: "move_to_vault",
       credentialId
     }]);
+  });
+
+  it("turns every manually entered secret into an explicit protected range", () => {
+    const capture = buildManualCapture({
+      keyword: "家庭路由器",
+      secrets: ["123456", "中文口令"],
+      note: "书房"
+    });
+
+    expect(capture.text).toBe("家庭路由器\n保密信息：123456\n保密信息二：中文口令\n备注：书房");
+    expect(capture.manual.map(({ entityType, ...range }) => ({
+      ...range,
+      value: capture.text.slice(range.start, range.end),
+      entityType
+    }))).toEqual([
+      expect.objectContaining({ value: "123456", entityType: "custom" }),
+      expect.objectContaining({ value: "中文口令", entityType: "custom" })
+    ]);
   });
 });

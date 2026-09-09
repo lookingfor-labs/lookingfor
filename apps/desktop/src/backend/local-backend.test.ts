@@ -99,6 +99,68 @@ describe("LocalBackend", () => {
     ]);
     backend.close();
   });
+
+  it("uses an explicit manual range even when a short secret is not auto-detected", () => {
+    const dataDirectory = mkdtempSync(join(tmpdir(), "brainbuddy-local-backend-"));
+    directories.push(dataDirectory);
+    const backend = createBackend(dataDirectory);
+    const original = "路由器\n保密信息：123456\n备注：书房";
+    const secret = "123456";
+    const start = original.indexOf(secret);
+
+    const receipt = backend.save(original, [{
+      start,
+      end: start + secret.length,
+      policy: "move_to_vault"
+    }], "capture", [{
+      start,
+      end: start + secret.length,
+      entityType: "custom"
+    }]);
+
+    expect(receipt.preview.protectedContent).not.toContain(secret);
+    expect(receipt.preview.credentials).toEqual([
+      expect.objectContaining({ entityType: "custom", maskedValue: "••••••" })
+    ]);
+    backend.close();
+  });
+
+  it("lets a manual protection override an automatic detection with user metadata", () => {
+    const dataDirectory = mkdtempSync(join(tmpdir(), "brainbuddy-local-backend-"));
+    directories.push(dataDirectory);
+    const backend = createBackend(dataDirectory);
+    const original = "密码是 77778888";
+    const secret = "77778888";
+    const start = original.indexOf(secret);
+
+    const preview = backend.preview(original, [{
+      start,
+      end: start + secret.length,
+      policy: "move_to_vault"
+    }], [{
+      start,
+      end: start + secret.length,
+      entityType: "api_key",
+      note: "家庭服务器"
+    }]);
+
+    expect(preview.credentials[0]?.entityType).toBe("api_key");
+    expect(preview.protectedContent).toContain("备注：家庭服务器");
+    expect(preview.protectedContent).not.toContain(secret);
+    backend.close();
+  });
+
+  it("rejects overlapping manual protection ranges", () => {
+    const dataDirectory = mkdtempSync(join(tmpdir(), "brainbuddy-local-backend-"));
+    directories.push(dataDirectory);
+    const backend = createBackend(dataDirectory);
+
+    expect(() => backend.preview("abcdefgh", [], [
+      { start: 0, end: 4, entityType: "custom" },
+      { start: 3, end: 6, entityType: "custom" }
+    ])).toThrow("Manual protection ranges cannot overlap");
+    backend.close();
+  });
 });
 
 function createBackend(dataDirectory: string, initialModelConnection?: {

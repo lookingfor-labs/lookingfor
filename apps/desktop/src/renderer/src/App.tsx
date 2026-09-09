@@ -71,7 +71,8 @@ const typeLabels: Readonly<Record<EntityType, string>> = {
   high_entropy_secret: "疑似密钥",
   person: "人物",
   company: "公司",
-  project: "项目"
+  project: "项目",
+  custom: "自定义"
 };
 
 const policyLabels: Readonly<Record<ProtectionPolicy, string>> = {
@@ -911,8 +912,8 @@ async function streamAiConversation(
   if (pending.trim()) onEvent((JSON.parse(pending) as { readonly event: AiConversationEvent }).event);
 }
 
-async function prepareAgentRun(text: string, writePolicy: MemoryWritePolicy, decisions?: ProtectionRequest["decisions"]): Promise<AgentRunDraft> {
-  const request = { text, writePolicy, ...(decisions ? { decisions } : {}) };
+async function prepareAgentRun(text: string, writePolicy: MemoryWritePolicy, decisions?: ProtectionRequest["decisions"], manual?: ProtectionRequest["manual"]): Promise<AgentRunDraft> {
+  const request = { text, writePolicy, ...(decisions ? { decisions } : {}), ...(manual && manual.length ? { manual } : {}) };
   if (window.brainBuddy) return window.brainBuddy.prepareAgentRun(request);
   return postJson<AgentRunDraft>("/api/agent/prepare", request);
 }
@@ -1002,6 +1003,22 @@ export async function saveSuggestedProtectedText(text: string): Promise<DemoSave
   return saveDemoCandidate({
     text,
     decisions: analysis.entities.map(({ start, end, suggestedPolicy: policy }) => ({ start, end, policy }))
+  });
+}
+
+export async function saveExplicitProtectedText(
+  text: string,
+  manual: NonNullable<ProtectionRequest["manual"]>
+): Promise<DemoSaveReceipt> {
+  const analysis = await analyzeInput(text);
+  const detected = analysis.entities.filter((entity) => !manual.some((segment) => segment.start < entity.end && entity.start < segment.end));
+  return saveDemoCandidate({
+    text,
+    manual,
+    decisions: [
+      ...detected.map(({ start, end, suggestedPolicy: policy }) => ({ start, end, policy })),
+      ...manual.map(({ start, end }) => ({ start, end, policy: "move_to_vault" as const }))
+    ].sort((left, right) => left.start - right.start)
   });
 }
 

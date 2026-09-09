@@ -30,6 +30,18 @@ export const AnalyzeInputRequestSchema = z.object({
 
 export type AnalyzeInputRequest = z.infer<typeof AnalyzeInputRequestSchema>;
 
+export const ManualSegmentSchema = z.object({
+  start: z.number().int().nonnegative(),
+  end: z.number().int().nonnegative(),
+  entityType: z.enum([
+    "password", "api_key", "email", "private_key", "github_token", "jwt",
+    "high_entropy_secret", "person", "company", "project", "custom"
+  ]),
+  note: z.string().trim().max(500).optional()
+});
+
+export type ManualSegment = z.infer<typeof ManualSegmentSchema>;
+
 const ProtectionDecisionSchema = z.object({
   start: z.number().int().nonnegative(),
   end: z.number().int().nonnegative(),
@@ -39,7 +51,8 @@ const ProtectionDecisionSchema = z.object({
 
 export const ProtectionRequestSchema = z.object({
   text: z.string().max(20_000),
-  decisions: z.array(ProtectionDecisionSchema).max(500)
+  decisions: z.array(ProtectionDecisionSchema).max(500),
+  manual: z.array(ManualSegmentSchema).max(100).readonly().optional()
 });
 
 export type ProtectionRequest = z.infer<typeof ProtectionRequestSchema>;
@@ -69,7 +82,8 @@ export const CancelAiConversationRequestSchema = z.object({
 export const PrepareAgentRunRequestSchema = z.object({
   text: z.string().trim().min(1).max(2_000),
   writePolicy: z.enum(["require_approval", "auto_apply"]),
-  decisions: z.array(ProtectionDecisionSchema).max(500).optional()
+  decisions: z.array(ProtectionDecisionSchema).max(500).optional(),
+  manual: z.array(ManualSegmentSchema).max(100).readonly().optional()
 });
 
 export const StartAgentRunRequestSchema = z.object({ draftId: z.string().uuid() });
