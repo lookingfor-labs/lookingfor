@@ -16,10 +16,11 @@ describe("LocalBackend", () => {
     const first = createBackend(dataDirectory);
     const analysis = first.analyze(original);
     const receipt = first.save(original, analysis.entities.map(({ start, end, suggestedPolicy: policy }) => ({ start, end, policy })));
+    const apiCredential = receipt.preview.credentials.find(({ entityType }) => entityType === "api_key")!;
     first.memories.apply({
       operation: "create",
       path: "memories/figma.md",
-      content: `Figma 凭据 ${receipt.preview.credentials[0]?.ref}\n\n来源：[SOURCE:${receipt.sourceId}]`,
+      content: `Figma 凭据 ${apiCredential.ref}\n\n来源：[SOURCE:${receipt.sourceId}]`,
       reason: "integration test"
     });
     first.access.configure(undefined, "persistent-password");
@@ -27,13 +28,13 @@ describe("LocalBackend", () => {
 
     const reopened = createBackend(dataDirectory);
     expect(reopened.access.status()).toEqual({ passwordConfigured: true, unlocked: false });
-    expect(reopened.search("Figma").sources.map(({ sourceId }) => sourceId)).toContain(receipt.sourceId);
+    expect(reopened.search(receipt.sourceId).sources.map(({ sourceId }) => sourceId)).toContain(receipt.sourceId);
     expect(reopened.memories.list().map(({ path }) => path)).toEqual(["memories/figma.md"]);
     expect(() => reopened.reveal(receipt.sourceId)).toThrow("DATABASE_LOCKED");
-    expect(() => reopened.revealCredential(receipt.credentialIds[0]!)).toThrow("DATABASE_LOCKED");
+    expect(() => reopened.revealCredential(apiCredential.credentialId)).toThrow("DATABASE_LOCKED");
     reopened.access.unlock("persistent-password");
     expect(reopened.reveal(receipt.sourceId).originalContent).toBe(original);
-    expect(reopened.revealCredential(receipt.credentialIds[0]!).value).toBe("sk-local-backend-secret-123456");
+    expect(reopened.revealCredential(apiCredential.credentialId).value).toBe("sk-local-backend-secret-123456");
     reopened.close();
   });
 
@@ -46,12 +47,19 @@ describe("LocalBackend", () => {
 
     const receipt = backend.saveSuggested(original);
 
-    expect(receipt.preview.protectedContent).toContain("admin@example.com");
+    expect(receipt.preview.protectedContent).not.toContain("figma");
+    expect(receipt.preview.protectedContent).not.toContain("admin@example.com");
     expect(receipt.preview.protectedContent).not.toContain(secret);
-    expect(receipt.preview.credentials).toEqual([
-      expect.objectContaining({ entityType: "high_entropy_secret" })
+    expect(receipt.preview.credentials.map(({ entityType }) => entityType)).toEqual([
+      "custom",
+      "email",
+      "high_entropy_secret"
     ]);
-    expect(backend.revealCredential(receipt.credentialIds[0]!).value).toBe(secret);
+    expect(receipt.credentialIds.map((credentialId) => backend.revealCredential(credentialId).value)).toEqual([
+      "figma",
+      "admin@example.com",
+      secret
+    ]);
     backend.close();
   });
 
@@ -96,7 +104,7 @@ describe("LocalBackend", () => {
     const dataDirectory = mkdtempSync(join(tmpdir(), "brainbuddy-local-backend-"));
     directories.push(dataDirectory);
     const backend = createBackend(dataDirectory);
-    const original = "记录一下 agentflow 的密码是 77778888";
+    const original = "记录一下服务的密码是 77778888";
     const secret = "77778888";
     const start = original.indexOf(secret);
     const credentialId = "00e5dcad-aad5-4fe2-a520-3ca35e0d03a8";
@@ -109,7 +117,7 @@ describe("LocalBackend", () => {
     }], "conversation");
 
     expect(receipt.preview.protectedContent).toContain(
-      `记录一下 agentflow 的密码是 [CREDENTIAL:${credentialId}]`
+      `记录一下服务的密码是 [CREDENTIAL:${credentialId}]`
     );
     expect(receipt.preview.protectedContent).toContain(`来源：[SOURCE:${receipt.sourceId}]`);
     expect(receipt.preview.credentials).toEqual([

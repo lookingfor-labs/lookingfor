@@ -2,6 +2,7 @@ import type { EntityMapping, ProtectionDecision } from "@brainbuddy/domain";
 import { describe, expect, it } from "vitest";
 import {
   ApiKeyRecognizer,
+  AsciiSegmentRecognizer,
   buildProtectionPlan,
   EmailRecognizer,
   GitHubTokenRecognizer,
@@ -26,7 +27,16 @@ describe("first recognizers", () => {
 
   it("detects email addresses", () => {
     const [entity] = new EmailRecognizer().recognize("联系 luyong@example.com 处理");
-    expect(entity).toMatchObject({ text: "luyong@example.com", type: "email" });
+    expect(entity).toMatchObject({ text: "luyong@example.com", type: "email", suggestedPolicy: "move_to_vault" });
+  });
+
+  it("marks whitespace-delimited ASCII segments for protection", () => {
+    const entities = new AsciiSegmentRecognizer().recognize("figma 账号：admin@example.com\t2025@ --- 中文");
+
+    expect(entities.map(({ text, suggestedPolicy }) => ({ text, suggestedPolicy }))).toEqual([
+      { text: "figma", suggestedPolicy: "move_to_vault" },
+      { text: "2025@", suggestedPolicy: "move_to_vault" }
+    ]);
   });
 
   it("detects a PEM private key block as one critical entity", () => {
@@ -99,14 +109,16 @@ describe("PrivacyEngine", () => {
   it("resolves overlaps in favor of the specialized critical recognizer", () => {
     const token = "ghp_1234567890abcdefghij";
     const result = new PrivacyEngine().analyze(`token ${token}`);
-    expect(result.entities).toHaveLength(1);
-    expect(result.entities[0]?.type).toBe("github_token");
+    expect(result.entities.map(({ text, type }) => ({ text, type }))).toEqual([
+      { text: "token", type: "custom" },
+      { text: token, type: "github_token" }
+    ]);
   });
 
   it("reports detected entities without creating another content view", () => {
     const input = "Figma 账号 luyong@example.com，密码是 A9x!4mQ2#pL7。";
     const result = new PrivacyEngine({ now: () => new Date("2025-01-01T00:00:00.000Z") }).analyze(input);
-    expect(result.entities.map((entity) => entity.type)).toEqual(["email", "password"]);
+    expect(result.entities.map((entity) => entity.type)).toEqual(["custom", "email", "password"]);
     expect(result).not.toHaveProperty("protectedPreview");
     expect(result.analyzedAt).toBe("2025-01-01T00:00:00.000Z");
   });
@@ -117,9 +129,14 @@ describe("PrivacyEngine", () => {
 
     expect(result.entities).toEqual([
       expect.objectContaining({
+        text: "figma",
+        type: "custom",
+        suggestedPolicy: "move_to_vault"
+      }),
+      expect.objectContaining({
         text: "admin@example.com",
         type: "email",
-        suggestedPolicy: "keep_original"
+        suggestedPolicy: "move_to_vault"
       }),
       expect.objectContaining({
         text: "demopass2025@",
@@ -132,8 +149,10 @@ describe("PrivacyEngine", () => {
   it("detects a contextual API key without transforming the input", () => {
     const secret = "sk-sdsdasdadasdasdasdaniinnz";
     const result = new PrivacyEngine().analyze(`我的中转站的 key 是 ${secret}`);
-    expect(result.entities).toHaveLength(1);
-    expect(result.entities[0]?.type).toBe("api_key");
+    expect(result.entities.map(({ text, type }) => ({ text, type }))).toEqual([
+      { text: "key", type: "custom" },
+      { text: secret, type: "api_key" }
+    ]);
     expect(result).not.toHaveProperty("protectedPreview");
   });
 
@@ -166,20 +185,30 @@ describe("buildProtectionPlan", () => {
       end: entity.end,
       policy: entity.suggestedPolicy
     }));
+    const credentialIds = [
+      credentialId,
+      "550e8400-e29b-41d4-a716-446655440001"
+    ];
     const plan = buildProtectionPlan({
       text: input,
       entities,
       decisions,
-      credentialIdFactory: () => credentialId
+      credentialIdFactory: () => credentialIds.shift()!
     });
 
     expect(plan.protectedContent).toBe(
-      "张伟的账号 demo@example.com，key 是 [CREDENTIAL:550e8400-e29b-41d4-a716-446655440000]"
+      "张伟的账号 [CREDENTIAL:550e8400-e29b-41d4-a716-446655440000]，key 是 [CREDENTIAL:550e8400-e29b-41d4-a716-446655440001]"
     );
     expect(plan.credentialDrafts).toEqual([
       expect.objectContaining({
         credentialId,
         ref: "[CREDENTIAL:550e8400-e29b-41d4-a716-446655440000]",
+        entityType: "email",
+        secret: "demo@example.com"
+      }),
+      expect.objectContaining({
+        credentialId: "550e8400-e29b-41d4-a716-446655440001",
+        ref: "[CREDENTIAL:550e8400-e29b-41d4-a716-446655440001]",
         entityType: "api_key",
         secret: "sk-demoExample1234567890"
       })

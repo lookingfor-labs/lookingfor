@@ -16,7 +16,7 @@ export class EmailRecognizer implements Recognizer {
         type: "email",
         risk: "high",
         reason: ["符合邮箱地址格式"],
-        suggestedPolicy: "keep_original",
+        suggestedPolicy: "move_to_vault",
         recognizerId: this.id
       })
     );
@@ -239,5 +239,29 @@ export class KnownEntityRecognizer implements Recognizer {
       }
     }
     return entities;
+  }
+}
+
+export class AsciiSegmentRecognizer implements Recognizer {
+  readonly id = "ascii-segment";
+
+  recognize(text: string): readonly DetectedEntity[] {
+    return collectMatches(text, /\S+/gu, (match) => {
+      const segment = match[0];
+      if (!/^[\x21-\x7e]+$/u.test(segment) || !/[A-Za-z0-9]/u.test(segment)) {
+        return undefined;
+      }
+      return {
+        text: segment,
+        start: match.index,
+        end: match.index + segment.length,
+        type: "custom",
+        risk: "medium",
+        reason: ["空白分段后仅包含英文字母、数字或英文标点"],
+        suggestedPolicy: "move_to_vault",
+        recognizerId: this.id,
+        replacementToken: "[POTENTIAL_SECRET]"
+      };
+    });
   }
 }
