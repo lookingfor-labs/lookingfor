@@ -10,7 +10,6 @@ import {
   Database,
   Eye,
   FileMd,
-  Flask,
   FloppyDisk,
   Folder,
   Gear,
@@ -209,7 +208,7 @@ export async function prepareMvpAgentRun(options: {
   return draft;
 }
 
-export function MvpApp({ onOpenDemo }: { readonly onOpenDemo: () => void }): JSX.Element {
+export function MvpApp(): JSX.Element {
   const [page, setPage] = useState<MvpPage>("home");
   const [recordRefresh, setRecordRefresh] = useState(0);
   const [memoryRefresh, setMemoryRefresh] = useState(0);
@@ -232,7 +231,6 @@ export function MvpApp({ onOpenDemo }: { readonly onOpenDemo: () => void }): JSX
       <div className="mvp-sidebar-foot">
         <ShieldCheck size={20} weight="duotone" aria-hidden="true" />
         <div><strong>本地优先，隐私至上</strong><span>原始数据只保存在本机</span></div>
-        <button type="button" onClick={onOpenDemo}><Flask size={16} aria-hidden="true" />打开验收 Demo</button>
       </div>
     </aside>
     <main className="mvp-main">
@@ -832,10 +830,21 @@ function QuestionProtectionNotice({ analysis, preview, decisions, isChecking, er
       {visible.map((entity) => {
         const key = questionEntityKey(entity);
         const credential = preview.credentials.find((item) => item.start === entity.start && item.end === entity.end);
-        return <button key={key} type="button" className="mvp-protect-entity vault" onClick={() => setEditing(entity)} title="点击编辑加密方式">
-          <span className="mvp-protect-entity-badge"><em>{questionEntityTypeLabel(entity.type)}</em><code>{entity.text}</code></span>
-          <span className="mvp-protect-ai-view">AI 可见版本 <code>{credential ? credential.ref : entity.text}</code></span>
-        </button>;
+        return <div key={key} className="mvp-protect-entity-row">
+          <button type="button" className="mvp-protect-entity vault" onClick={() => setEditing(entity)} title="点击编辑加密方式">
+            <span className="mvp-protect-entity-badge"><em>{questionEntityTypeLabel(entity.type)}</em><code>{entity.text}</code></span>
+            <span className="mvp-protect-ai-view">AI 可见版本 <code>{credential ? credential.ref : entity.text}</code></span>
+          </button>
+          <button
+            type="button"
+            className="mvp-protect-plaintext"
+            aria-label={`解除 ${questionEntityTypeLabel(entity.type)} 加密，提交时保存明文`}
+            title="解除加密，提交时保存明文"
+            onClick={() => void onRemoveEntity(entity)}
+          >
+            <LockOpen size={17} aria-hidden="true" />
+          </button>
+        </div>;
       })}
     </div>
 
