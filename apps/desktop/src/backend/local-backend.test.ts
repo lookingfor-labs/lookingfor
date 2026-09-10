@@ -47,16 +47,14 @@ describe("LocalBackend", () => {
 
     const receipt = backend.saveSuggested(original);
 
-    expect(receipt.preview.protectedContent).not.toContain("figma");
+    expect(receipt.preview.protectedContent).toContain("figma");
     expect(receipt.preview.protectedContent).not.toContain("admin@example.com");
     expect(receipt.preview.protectedContent).not.toContain(secret);
     expect(receipt.preview.credentials.map(({ entityType }) => entityType)).toEqual([
-      "custom",
       "email",
       "high_entropy_secret"
     ]);
     expect(receipt.credentialIds.map((credentialId) => backend.revealCredential(credentialId).value)).toEqual([
-      "figma",
       "admin@example.com",
       secret
     ]);

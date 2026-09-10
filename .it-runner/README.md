@@ -17,7 +17,9 @@ checks it through `127.0.0.1:15174`. The task uses
 Node runtime from the it-runner host. If a graphical Agentflow-hosted runner is
 running as root, this development-only task passes electron-vite's `--noSandbox`
 flag. The browser fallback analyzes sample input locally in development mode.
-The packaged application keeps its normal preload IPC and sandbox configuration;
+Changes to its backend or workspace package sources automatically restart Vite
+so the Node middleware does not retain stale privacy recognizers. The packaged
+application keeps its normal preload IPC and sandbox configuration;
 do not use the development task with real secrets.
 
 File-based controls:

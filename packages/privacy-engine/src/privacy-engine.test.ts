@@ -31,11 +31,12 @@ describe("first recognizers", () => {
   });
 
   it("marks whitespace-delimited ASCII segments for protection", () => {
-    const entities = new AsciiSegmentRecognizer().recognize("figma 账号：admin@example.com\t2025@ --- 中文");
+    const entities = new AsciiSegmentRecognizer().recognize("figma 账号：admin@example.com\t2025@ demo2025 123456 --- 中文");
 
     expect(entities.map(({ text, suggestedPolicy }) => ({ text, suggestedPolicy }))).toEqual([
-      { text: "figma", suggestedPolicy: "move_to_vault" },
-      { text: "2025@", suggestedPolicy: "move_to_vault" }
+      { text: "2025@", suggestedPolicy: "move_to_vault" },
+      { text: "demo2025", suggestedPolicy: "move_to_vault" },
+      { text: "123456", suggestedPolicy: "move_to_vault" }
     ]);
   });
 
@@ -109,16 +110,14 @@ describe("PrivacyEngine", () => {
   it("resolves overlaps in favor of the specialized critical recognizer", () => {
     const token = "ghp_1234567890abcdefghij";
     const result = new PrivacyEngine().analyze(`token ${token}`);
-    expect(result.entities.map(({ text, type }) => ({ text, type }))).toEqual([
-      { text: "token", type: "custom" },
-      { text: token, type: "github_token" }
-    ]);
+    expect(result.entities).toHaveLength(1);
+    expect(result.entities[0]?.type).toBe("github_token");
   });
 
   it("reports detected entities without creating another content view", () => {
     const input = "Figma 账号 luyong@example.com，密码是 A9x!4mQ2#pL7。";
     const result = new PrivacyEngine({ now: () => new Date("2025-01-01T00:00:00.000Z") }).analyze(input);
-    expect(result.entities.map((entity) => entity.type)).toEqual(["custom", "email", "password"]);
+    expect(result.entities.map((entity) => entity.type)).toEqual(["email", "password"]);
     expect(result).not.toHaveProperty("protectedPreview");
     expect(result.analyzedAt).toBe("2025-01-01T00:00:00.000Z");
   });
@@ -128,11 +127,6 @@ describe("PrivacyEngine", () => {
     const result = new PrivacyEngine().analyze(input);
 
     expect(result.entities).toEqual([
-      expect.objectContaining({
-        text: "figma",
-        type: "custom",
-        suggestedPolicy: "move_to_vault"
-      }),
       expect.objectContaining({
         text: "admin@example.com",
         type: "email",
@@ -149,10 +143,8 @@ describe("PrivacyEngine", () => {
   it("detects a contextual API key without transforming the input", () => {
     const secret = "sk-sdsdasdadasdasdasdaniinnz";
     const result = new PrivacyEngine().analyze(`我的中转站的 key 是 ${secret}`);
-    expect(result.entities.map(({ text, type }) => ({ text, type }))).toEqual([
-      { text: "key", type: "custom" },
-      { text: secret, type: "api_key" }
-    ]);
+    expect(result.entities).toHaveLength(1);
+    expect(result.entities[0]?.type).toBe("api_key");
     expect(result).not.toHaveProperty("protectedPreview");
   });
 

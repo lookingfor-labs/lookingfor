@@ -251,13 +251,20 @@ export class AsciiSegmentRecognizer implements Recognizer {
       if (!/^[\x21-\x7e]+$/u.test(segment) || !/[A-Za-z0-9]/u.test(segment)) {
         return undefined;
       }
+      const hasLetters = /[A-Za-z]/u.test(segment);
+      const hasDigits = /\d/u.test(segment);
+      const hasPunctuation = /[!-/:-@[-`{-~]/u.test(segment);
+      const characterClasses = [hasLetters, hasDigits, hasPunctuation].filter(Boolean).length;
+      const isLongNumericSegment = hasDigits && !hasLetters && !hasPunctuation && segment.length >= 6;
+      // Plain alphabetic words are usually labels; mixed tokens and long numeric codes are safer defaults.
+      if (characterClasses < 2 && !isLongNumericSegment) return undefined;
       return {
         text: segment,
         start: match.index,
         end: match.index + segment.length,
         type: "custom",
         risk: "medium",
-        reason: ["空白分段后仅包含英文字母、数字或英文标点"],
+        reason: ["空白分段后包含多类 ASCII 字符或较长数字"],
         suggestedPolicy: "move_to_vault",
         recognizerId: this.id,
         replacementToken: "[POTENTIAL_SECRET]"
