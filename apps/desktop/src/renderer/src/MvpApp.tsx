@@ -181,6 +181,17 @@ function mergedAnalysis(
   return { ...engine, entities: [...detected, ...manual].sort((left, right) => left.start - right.start) };
 }
 
+export function activeQuestionProtectionRanges(
+  analysis: PrivacyAnalysis | undefined,
+  decisions: Readonly<Record<string, ProtectionPolicy>>,
+  manualRanges: readonly { readonly start: number; readonly end: number }[]
+): readonly { readonly start: number; readonly end: number }[] {
+  const detected = (analysis?.entities ?? []).filter(
+    (entity) => (decisions[questionEntityKey(entity)] ?? entity.suggestedPolicy) !== "keep_original"
+  );
+  return [...detected, ...manualRanges];
+}
+
 const EDIT_TYPE_OPTIONS: readonly { readonly value: EntityType; readonly label: string }[] = [
   { value: "password", label: "密码" },
   { value: "api_key", label: "API Key" },
@@ -340,6 +351,11 @@ function HomePage({ active, memoryWritePolicy, onSaved }: { readonly active: boo
       setCredentialRevealError(undefined);
     }
   }, [active]);
+
+  useEffect(() => {
+    if (!selection || isRunning || isCheckingQuestion || !questionAnalysis) return;
+    void encryptSelection(selection);
+  }, [selection, isRunning, isCheckingQuestion, questionAnalysis]);
 
   async function analyzeQuestion(text: string, sequence: number): Promise<void> {
     try {
@@ -573,11 +589,11 @@ function HomePage({ active, memoryWritePolicy, onSaved }: { readonly active: boo
     setSaveForm((current) => ({ ...current, secrets: current.secrets.length > 1 ? current.secrets.filter((_, i) => i !== index) : [""] }));
   }
 
-  async function encryptSelection(): Promise<void> {
-    if (!selection || selection.end <= selection.start || isRunning || isCheckingQuestion) return;
-    const { start, end } = selection;
+  async function encryptSelection(selected: { readonly start: number; readonly end: number }): Promise<void> {
+    if (selected.end <= selected.start || isRunning || isCheckingQuestion) return;
+    const { start, end } = selected;
     if (end > question.length) return;
-    const protectedRanges = [...(questionAnalysis?.entities ?? []), ...manualRanges];
+    const protectedRanges = activeQuestionProtectionRanges(questionAnalysis, questionDecisions, manualRanges);
     if (protectedRanges.some((item) => item.start < end && start < item.end)) {
       showToast("选中内容已在保护范围内，请选择其他文本。");
       setSelection(undefined);
@@ -612,7 +628,6 @@ function HomePage({ active, memoryWritePolicy, onSaved }: { readonly active: boo
   }
 
   const merged = mergedAnalysis(questionAnalysis, question, manualRanges, manualMeta);
-  const scratchReady = Boolean(selection && selection.end > selection.start && question.length > 0 && !isRunning && !isCheckingQuestion && (selection?.end ?? 0) <= question.length);
 
   const canSendAuto = Boolean(question.trim()) && Boolean(questionPreview?.readyToSave) && !isCheckingQuestion && !questionProtectionError && !isRunning;
   const showSuggestions = mode === "auto" && !hasConversation && !question.trim();
@@ -659,9 +674,9 @@ function HomePage({ active, memoryWritePolicy, onSaved }: { readonly active: boo
             <textarea id="mvp-question" ref={questionRef} value={question} disabled={isRunning} onChange={(event) => updateQuestion(event.target.value)} onSelect={(event) => { const element = event.currentTarget; const start = element.selectionStart ?? 0; const end = element.selectionEnd ?? 0; setSelection(start === end ? undefined : { start: Math.min(start, end), end: Math.max(start, end) }); }} placeholder="输入你想记住或查询的内容" />
             <div className="mvp-composer-bar">
               <ModeToggle mode={mode} onSwitch={switchMode} />
-              <span className="mvp-scratch-wrap" aria-hidden={false}>
-                <button type="button" className={`mvp-scratch-lock ${scratchReady ? "ready" : ""}`} disabled={!scratchReady} onClick={() => void encryptSelection()}><IcSelectWord />划词加密</button>
-                {!scratchReady && <span className="mvp-scratch-tip" role="tooltip">输入框划取信息手动加密</span>}
+              <span className="mvp-scratch-wrap">
+                <span className="mvp-scratch-lock" aria-describedby="mvp-scratch-tip"><IcSelectWord />划词自动加密</span>
+                <span id="mvp-scratch-tip" className="mvp-scratch-tip" role="tooltip">在输入框划取文字后自动加入敏感字段</span>
               </span>
               <span className="mvp-composer-spacer" />
               {isRunning

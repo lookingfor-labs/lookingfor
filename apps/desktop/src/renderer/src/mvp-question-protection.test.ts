@@ -1,6 +1,6 @@
 import type { PrivacyAnalysis } from "@brainbuddy/domain";
 import { describe, expect, it } from "vitest";
-import { buildManualCapture, buildQuestionProtectionDecisions, prepareMvpAgentRun } from "./MvpApp";
+import { activeQuestionProtectionRanges, buildManualCapture, buildQuestionProtectionDecisions, prepareMvpAgentRun } from "./MvpApp";
 
 describe("MVP question protection", () => {
   it("refreshes database records immediately after the conversation Source is persisted", async () => {
@@ -75,6 +75,28 @@ describe("MVP question protection", () => {
     }))).toEqual([
       expect.objectContaining({ value: "123456", entityType: "custom" }),
       expect.objectContaining({ value: "中文口令", entityType: "custom" })
+    ]);
+  });
+
+  it("allows a keep-original entity to be selected for protection again", () => {
+    const analysis: PrivacyAnalysis = {
+      inputLength: 6,
+      analyzedAt: "2026-09-11T00:00:00.000Z",
+      entities: [{
+        text: "secret",
+        start: 0,
+        end: 6,
+        type: "custom",
+        risk: "medium",
+        reason: ["ASCII segment"],
+        suggestedPolicy: "move_to_vault",
+        recognizerId: "ascii-segment"
+      }]
+    };
+
+    expect(activeQuestionProtectionRanges(analysis, { "0:6": "keep_original" }, [])).toEqual([]);
+    expect(activeQuestionProtectionRanges(analysis, { "0:6": "move_to_vault" }, [])).toEqual([
+      expect.objectContaining({ start: 0, end: 6 })
     ]);
   });
 });
