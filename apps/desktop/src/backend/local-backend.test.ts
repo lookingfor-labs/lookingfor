@@ -37,6 +37,24 @@ describe("LocalBackend", () => {
     reopened.close();
   });
 
+  it("extracts a mixed-character secret following an account email", () => {
+    const dataDirectory = mkdtempSync(join(tmpdir(), "brainbuddy-local-backend-"));
+    directories.push(dataDirectory);
+    const backend = createBackend(dataDirectory);
+    const secret = "demopass2025@";
+    const original = `figma 账号： admin@example.com  ${secret}`;
+
+    const receipt = backend.saveSuggested(original);
+
+    expect(receipt.preview.protectedContent).toContain("admin@example.com");
+    expect(receipt.preview.protectedContent).not.toContain(secret);
+    expect(receipt.preview.credentials).toEqual([
+      expect.objectContaining({ entityType: "high_entropy_secret" })
+    ]);
+    expect(backend.revealCredential(receipt.credentialIds[0]!).value).toBe(secret);
+    backend.close();
+  });
+
   it("imports, encrypts and persists the model connection behind a safe status", () => {
     const dataDirectory = mkdtempSync(join(tmpdir(), "brainbuddy-local-backend-"));
     directories.push(dataDirectory);

@@ -111,6 +111,24 @@ describe("PrivacyEngine", () => {
     expect(result.analyzedAt).toBe("2025-01-01T00:00:00.000Z");
   });
 
+  it("detects the secret following an account email", () => {
+    const input = "figma 账号： admin@example.com  demopass2025@";
+    const result = new PrivacyEngine().analyze(input);
+
+    expect(result.entities).toEqual([
+      expect.objectContaining({
+        text: "admin@example.com",
+        type: "email",
+        suggestedPolicy: "keep_original"
+      }),
+      expect.objectContaining({
+        text: "demopass2025@",
+        type: "high_entropy_secret",
+        suggestedPolicy: "move_to_vault"
+      })
+    ]);
+  });
+
   it("detects a contextual API key without transforming the input", () => {
     const secret = "sk-sdsdasdadasdasdasdaniinnz";
     const result = new PrivacyEngine().analyze(`我的中转站的 key 是 ${secret}`);

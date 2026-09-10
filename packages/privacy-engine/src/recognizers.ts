@@ -189,7 +189,7 @@ export class HighEntropySecretRecognizer implements Recognizer {
         const characterClasses = [/[a-z]/u, /[A-Z]/u, /\d/u, /[^A-Za-z0-9]/u].filter(
           (pattern) => pattern.test(candidate)
         ).length;
-        if (!hasLetters || !hasDigits || characterClasses < 3 || shannonEntropy(candidate) < 3.4) {
+        if (!hasLetters || !hasDigits || characterClasses < 3 || shannonEntropy(candidate) < 3.3) {
           return undefined;
         }
         const start = match.index + match[0].indexOf(candidate);
