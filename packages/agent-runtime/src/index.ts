@@ -21,6 +21,7 @@ const MAX_LOCAL_TOOL_BATCHES = 6;
 const MAX_LOCAL_TOOL_CALLS = 16;
 const MAX_MODEL_REQUESTS = 10;
 const MAX_FINISH_ATTEMPTS = 2;
+const MAX_MODEL_OUTPUT_TOKENS = 4_096;
 const MAX_MEMORY_CONTENT_LENGTH = 50_000;
 const searchSchema = Type.Object({
   query: Type.String({ maxLength: 2_000 }),
@@ -447,7 +448,8 @@ export function createDeepSeekAgentRuntime(options: CreateDeepSeekAgentRuntimeOp
     ...template,
     id: modelId,
     name: modelId,
-    baseUrl: options.baseUrl?.trim() || template.baseUrl
+    baseUrl: options.baseUrl?.trim() || template.baseUrl,
+    maxTokens: Math.min(template.maxTokens, MAX_MODEL_OUTPUT_TOKENS)
   };
   return createAgentRuntime({
     model,

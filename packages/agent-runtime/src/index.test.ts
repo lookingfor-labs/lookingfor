@@ -6,6 +6,7 @@ import { createFauxCore, fauxAssistantMessage, fauxToolCall as coreFauxToolCall 
 import { DemoMemorySession } from "@brainbuddy/memory-engine/memory";
 import {
   createAgentRuntime,
+  createDeepSeekAgentRuntime,
   createFileAgentRunRecorder,
   requiresDurableMemory,
   type AgentRuntimeEvent,
@@ -27,6 +28,39 @@ function fauxToolCall(...args: Parameters<typeof coreFauxToolCall>): ReturnType<
 }
 
 describe("AgentRuntime", () => {
+  it("caps output tokens for custom OpenAI-compatible models", async () => {
+    const originalFetch = globalThis.fetch;
+    let requestBody: Record<string, unknown> | undefined;
+    globalThis.fetch = async (_input, init) => {
+      requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return new Response(JSON.stringify({ error: { message: "stop after capturing the request" } }), {
+        status: 400,
+        headers: { "content-type": "application/json" }
+      });
+    };
+
+    try {
+      const runtime = createDeepSeekAgentRuntime({
+        apiKey: "test-api-key",
+        baseUrl: "https://models.example.test/v1",
+        modelId: "custom-compatible-model",
+        records: protectedRecords(),
+        memories: new DemoMemorySession()
+      });
+      const draft = runtime.prepare({
+        message: "Capture this request",
+        conversationSourceId: "SOURCE_QUERY",
+        writePolicy: "auto_apply"
+      });
+
+      await runtime.start(draft.draftId, () => undefined).done;
+
+      expect(requestBody?.max_tokens).toBe(4_096);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("separates required writes, read-only queries, and model-chosen Memory decisions", async () => {
     const faux = createFauxCore({ tokensPerSecond: 0 });
     faux.setResponses([fauxAssistantMessage(fauxToolCall("brainbuddy_finish", {
