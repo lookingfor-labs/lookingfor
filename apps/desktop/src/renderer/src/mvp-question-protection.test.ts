@@ -1,8 +1,20 @@
 import type { PrivacyAnalysis } from "@brainbuddy/domain";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { activeQuestionProtectionRanges, buildManualCapture, buildQuestionProtectionDecisions, prepareMvpAgentRun } from "./MvpApp";
+import { activeQuestionProtectionRanges, buildManualCapture, buildQuestionProtectionDecisions, ManualSecretInput, prepareMvpAgentRun } from "./MvpApp";
 
 describe("MVP question protection", () => {
+  it("shows manually entered confidential information as plaintext while editing", () => {
+    const markup = renderToStaticMarkup(createElement(ManualSecretInput, {
+      value: "visible-secret",
+      onChange: () => undefined
+    }));
+
+    expect(markup).toContain('type="text"');
+    expect(markup).toContain('value="visible-secret"');
+  });
+
   it("refreshes database records immediately after the conversation Source is persisted", async () => {
     const calls: string[] = [];
     const draft = {

@@ -253,6 +253,13 @@ export function MvpApp(): JSX.Element {
   </div>;
 }
 
+export function ManualSecretInput({ value, onChange }: {
+  readonly value: string;
+  readonly onChange: (value: string) => void;
+}): JSX.Element {
+  return <input type="text" value={value} onChange={(event) => onChange(event.target.value)} placeholder="输入需要保密的信息" />;
+}
+
 function PageHeader({ title, copy }: { readonly title: string; readonly copy: string }): JSX.Element {
   return <header className="mvp-page-head"><h1>{title}</h1><p>{copy}</p></header>;
 }
@@ -697,7 +704,7 @@ function HomePage({ active, memoryWritePolicy, onSaved }: { readonly active: boo
             <label className="mvp-field-row" key={index}>
               <span className="mvp-field-name">{secretFieldLabel(index)}</span>
               <div className="mvp-field-control">
-                <input type="password" value={secret} onChange={(event) => updateSecret(index, event.target.value)} placeholder="输入需要保密的信息" />
+                <ManualSecretInput value={secret} onChange={(value) => updateSecret(index, value)} />
                 {index > 0 && <button type="button" className="mvp-field-remove" aria-label="删除这条保密信息" onClick={() => removeSecretField(index)}><X size={18} /></button>}
               </div>
             </label>
