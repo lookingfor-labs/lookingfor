@@ -233,9 +233,9 @@ describe("AgentRuntime", () => {
       conversationSourceId: "SOURCE_QUERY",
       writePolicy: "require_approval"
     });
-    const events: string[] = [];
+    const events: AgentRuntimeEvent[] = [];
 
-    const result = await runtime.start(draft.draftId, (event) => events.push(event.type)).done;
+    const result = await runtime.start(draft.draftId, (event) => events.push(event)).done;
 
     expect(result).toMatchObject({
       status: "completed",
@@ -246,8 +246,15 @@ describe("AgentRuntime", () => {
       ],
       budgets: { toolBatchCount: 1, toolCallCount: 1, modelRequestCount: 2, finishAttemptCount: 1 }
     });
-    expect(events).toContain("tool_result");
-    expect(events.at(-1)).toBe("agent_completed");
+    expect(events.some(({ type }) => type === "tool_result")).toBe(true);
+    expect(JSON.stringify(events)).not.toContain("maskedValue");
+    expect(JSON.stringify(events)).not.toContain("••••••••");
+    expect(events.find(({ type }) => type === "tool_result")).toMatchObject({
+      result: {
+        credentials: [{ credentialId: "CREDENTIAL_FIGMA", sourceIds: ["SOURCE_FIGMA"] }]
+      }
+    });
+    expect(events.at(-1)?.type).toBe("agent_completed");
   });
 
   it("finds records and Memory when a model combines searchable terms into one phrase", async () => {

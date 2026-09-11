@@ -64,6 +64,16 @@ export interface ProtectedRecordSearchResult {
   readonly truncated: boolean;
 }
 
+interface AgentProtectedRecordSearchResult {
+  readonly sources: readonly DemoSourceSummary[];
+  readonly credentials: readonly {
+    readonly credentialId: string;
+    readonly sourceIds: readonly string[];
+  }[];
+  readonly total: number;
+  readonly truncated: boolean;
+}
+
 export interface ProtectedRecordReader {
   search(query: string, limit: number): ProtectedRecordSearchResult;
   sourceExists(sourceId: string): boolean;
@@ -317,7 +327,7 @@ class ApprovalGate {
 const systemPrompt = `你是 BrainBuddy 的受控本地 Agent。
 使用已注册工具搜索受保护的本地记录与 Memory 文件；你无法读取 Source 原文或 Credential 明文。
 你收到的是经过 BrainBuddy 本地保护层处理后的用户消息；其中部分原始值可能已经替换为 [CREDENTIAL:<id>]，它是原始值的有效不透明引用。
-不要读取、猜测、恢复或重新创建 Credential 明文。保存长期信息时，必须把已有 [CREDENTIAL:<id>] 原样写入 Memory，并同时保留本轮 [SOURCE:<id>] 以便用户追溯原始记录。
+不要读取、猜测、恢复或重新创建 Credential 明文或掩码。回复与 Memory 都不得包含凭据的部分前后缀或“脱敏示例”。保存长期信息时，必须把已有 [CREDENTIAL:<id>] 原样写入 Memory，并同时保留本轮 [SOURCE:<id>] 以便用户追溯原始记录。
 先判断本轮的 Memory 行为：明确要求记住、记录、保存、写入或更新，以及陈述账号、密码、Key、Token 等可复用事实时必须写入；纯查找、查询、解释或总结时不得写入；其他可能长期有用的计划、偏好或事实由你判断是否值得写入。
 执行明确写入任务时，当前 [SOURCE:<id>] 已经可见，不要搜索当前 Source；最多先调用一次 search_memories 定位主题。找到现有文件时先 read_memory 再精确编辑；找不到时直接创建语义清晰的 memories/<topic>.md。
 基于本轮明确持久化事实的写入必须保留本轮 [SOURCE:<id>]，并原样保留消息中的全部 [CREDENTIAL:<id>]；不得仅因消息中出现引用就把纯查询变成写入。
@@ -503,7 +513,7 @@ function createTools(state: RunState, options: CreateAgentRuntimeOptions, approv
   const searchLocalRecords: AgentTool<typeof searchSchema> = {
     name: "search_local_records",
     label: "Search protected local records",
-    description: "Search protected Source records and masked Credential metadata. Do not use this to rediscover the current conversation Source, which is already visible.",
+    description: "Search protected Source records plus opaque Credential references and provenance. Credential values, masks, and classifications are never available. Do not use this to rediscover the current conversation Source, which is already visible.",
     parameters: searchSchema,
     executionMode: "sequential",
     async execute(_toolCallId, params) {
@@ -556,7 +566,7 @@ function createTools(state: RunState, options: CreateAgentRuntimeOptions, approv
   const writeMemory: AgentTool<typeof writeMemorySchema> = {
     name: "write_memory",
     label: "Write a Memory file",
-    description: "Create or exactly edit one controlled memories/<topic>.md file. Preserve every existing [CREDENTIAL:<id>] as an opaque reference and include the current [SOURCE:<id>] for durable facts. Never recover or replace Credential plaintext. The active Run policy controls approval.",
+    description: "Create or exactly edit one controlled memories/<topic>.md file. Preserve every existing [CREDENTIAL:<id>] as an opaque reference and include the current [SOURCE:<id>] for durable facts. Never recover, replace, or describe Credential plaintext or masks. The active Run policy controls approval.",
     parameters: writeMemorySchema,
     executionMode: "sequential",
     async execute(toolCallId, params, signal) {
@@ -623,13 +633,13 @@ function createTools(state: RunState, options: CreateAgentRuntimeOptions, approv
   return [searchLocalRecords, searchMemories, readMemory, writeMemory, finish];
 }
 
-function searchProtectedRecords(records: ProtectedRecordReader, query: string, limit: number): ProtectedRecordSearchResult {
+function searchProtectedRecords(records: ProtectedRecordReader, query: string, limit: number): AgentProtectedRecordSearchResult {
   const attempts = searchTerms(query).map((term) => records.search(term, limit));
   const sources = new Map<string, DemoSourceSummary>();
-  const credentials = new Map<string, DemoCredentialSummary>();
+  const credentials = new Map<string, AgentProtectedRecordSearchResult["credentials"][number]>();
   attempts.forEach((result) => {
     result.sources.forEach((source) => sources.set(source.sourceId, source));
-    result.credentials.forEach((credential) => credentials.set(credential.credentialId, credential));
+    result.credentials.forEach(({ credentialId, sourceIds }) => credentials.set(credentialId, { credentialId, sourceIds }));
   });
   const allSources = [...sources.values()];
   const allCredentials = [...credentials.values()];
