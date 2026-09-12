@@ -110,7 +110,7 @@ jobs:
           renderer_ready=false
           for attempt in {1..15}; do
             targets=$(curl -fsS http://127.0.0.1:19222/json/list 2>/dev/null || true)
-            if printf "%s" "$targets" | grep -q "BrainBuddy Privacy Lab"; then
+            if printf "%s" "$targets" | grep -q '"type": *"page"'; then
               renderer_ready=true
               break
             fi
