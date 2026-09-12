@@ -152,6 +152,35 @@ describe("LocalBackend", () => {
     backend.close();
   });
 
+  it("projects explicitly AI-readable manual fields as plaintext while vaulting the others", () => {
+    const dataDirectory = mkdtempSync(join(tmpdir(), "brainbuddy-local-backend-"));
+    directories.push(dataDirectory);
+    const backend = createBackend(dataDirectory);
+    const protectedSecret = "123456";
+    const readableValue = "门卡由行政保管";
+    const original = `办公室门禁\n保密信息：${protectedSecret}\n保密信息二：${readableValue}`;
+    const protectedStart = original.indexOf(protectedSecret);
+    const readableStart = original.indexOf(readableValue);
+    const manual = [
+      { start: protectedStart, end: protectedStart + protectedSecret.length, entityType: "custom" as const },
+      { start: readableStart, end: readableStart + readableValue.length, entityType: "custom" as const }
+    ];
+
+    const receipt = backend.save(original, [
+      { start: protectedStart, end: protectedStart + protectedSecret.length, policy: "move_to_vault" },
+      { start: readableStart, end: readableStart + readableValue.length, policy: "keep_original" }
+    ], "capture", manual);
+
+    expect(receipt.credentialIds).toHaveLength(1);
+    expect(receipt.preview.protectedContent).not.toContain(protectedSecret);
+    expect(receipt.preview.protectedContent).toContain(readableValue);
+    const projectedMemory = backend.memories.list()[0]!;
+    expect(projectedMemory.content).toContain(`[CREDENTIAL:${receipt.credentialIds[0]}]`);
+    expect(projectedMemory.content).toContain(`保密信息二：${readableValue}`);
+    expect(projectedMemory.content).not.toContain(protectedSecret);
+    backend.close();
+  });
+
   it("lets a manual protection override an automatic detection with user metadata", () => {
     const dataDirectory = mkdtempSync(join(tmpdir(), "brainbuddy-local-backend-"));
     directories.push(dataDirectory);

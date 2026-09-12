@@ -436,6 +436,7 @@ body.mvp-route { min-width: 0; background: #f6f7fb; }
 .mvp-home-footer { margin-top: 8px; color: #9aa1b0; font-size: 11px; text-align: center; }
 .mvp-manual { display: block; }
 .mvp-manual-fields { display: grid; gap: 12px; }
+.mvp-manual-secret-group { display: grid; gap: 3px; }
 .mvp-field-row { display: flex; align-items: center; gap: 16px; min-height: 44px; color: #3d465a; }
 .mvp-field-name { flex: 0 0 92px; font-size: 12px; font-weight: 700; }
 .mvp-field-control { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 10px; }
@@ -448,6 +449,13 @@ body.mvp-route { min-width: 0; background: #f6f7fb; }
 .mvp-add-secret-row .mvp-add-secret:hover { color: var(--mvp-accent-strong); }
 .mvp-field-remove { display: inline-grid; flex: 0 0 auto; place-items: center; width: 30px; height: 30px; border: 0; border-radius: 8px; background: transparent; color: #26292f; cursor: pointer; }
 .mvp-field-remove:hover { background: #f1f2f6; color: #141414; }
+.mvp-memory-visibility { display: flex; align-items: center; gap: 9px; min-height: 40px; margin-left: 108px; border-radius: 10px; padding: 5px 9px; color: #667085; cursor: pointer; transition-duration: 140ms; transition-property: background-color, color; }
+.mvp-memory-visibility:hover { background: #f5f4fc; color: #444052; }
+.mvp-memory-visibility.enabled { background: #f0eefc; color: #484071; }
+.mvp-memory-visibility input { flex: 0 0 auto; width: 16px; height: 16px; margin: 0; accent-color: var(--mvp-accent); cursor: pointer; }
+.mvp-memory-visibility strong, .mvp-memory-visibility small { display: block; }
+.mvp-memory-visibility strong { font-size: 12px; line-height: 1.35; }
+.mvp-memory-visibility small { margin-top: 2px; color: var(--mvp-muted); font-size: 10px; line-height: 1.35; }
 
 @media (max-width: 980px) {
   .mvp-app { grid-template-columns: 200px minmax(0, 1fr); }
@@ -484,6 +492,7 @@ body.mvp-route { min-width: 0; background: #f6f7fb; }
   .mvp-password-form, .mvp-model-form, .mvp-reset-confirm { grid-template-columns: 1fr; }
   .mvp-model-key { grid-column: auto; }
   .mvp-reset-confirm > div:first-child { grid-column: auto; }
+  .mvp-memory-visibility { margin-left: 0; }
 }
 
 @media (prefers-reduced-motion: reduce) {

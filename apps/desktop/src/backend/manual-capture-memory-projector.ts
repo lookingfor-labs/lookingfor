@@ -33,11 +33,12 @@ export function manualCaptureMemoryPath(sourceId: string): string {
 
 export function manualCaptureMemoryContent(receipt: DemoSaveReceipt): string {
   const protectedContent = receipt.preview.protectedContent.trim();
-  const title = protectedContent.split(/\r?\n/u).find((line) => line.trim())?.trim() || "主动保存的信息";
-  const credentialReferences = receipt.credentialIds.length
-    ? receipt.credentialIds.map((credentialId) => `[CREDENTIAL:${credentialId}]`).join("、")
-    : "无";
-  return `# ${title}\n\n- 记录方式：用户主动保存\n- 记录时间：${formatManualCaptureSavedAt(receipt.savedAt)}\n- 保密信息：${credentialReferences}\n- 原始记录：[SOURCE:${receipt.sourceId}]\n`;
+  const lines = protectedContent.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean);
+  const title = lines[0] || "主动保存的信息";
+  const sourceReference = `[SOURCE:${receipt.sourceId}]`;
+  const details = lines.slice(1).filter((line) => line !== `来源：${sourceReference}` && line !== `来源:${sourceReference}`);
+  const detailItems = details.map((line) => `- ${line}`).join("\n");
+  return `# ${title}\n\n- 记录方式：用户主动保存\n- 记录时间：${formatManualCaptureSavedAt(receipt.savedAt)}${detailItems ? `\n${detailItems}` : ""}\n- 原始记录：${sourceReference}\n`;
 }
 
 export function formatManualCaptureSavedAt(savedAt: string, timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone): string {

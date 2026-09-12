@@ -96,25 +96,43 @@ interface ChatMessage {
 
 interface SaveFormState {
   readonly keyword: string;
-  readonly secrets: readonly string[];
+  readonly secrets: readonly ManualSecretField[];
   readonly note: string;
+}
+
+interface ManualSecretField {
+  readonly value: string;
+  readonly exposeToMemory: boolean;
+}
+
+function emptyManualSecret(): ManualSecretField {
+  return { value: "", exposeToMemory: false };
 }
 
 export function buildManualCapture(form: SaveFormState): {
   readonly text: string;
   readonly manual: readonly ManualSegment[];
+  readonly manualDecisions: ProtectionRequest["decisions"];
 } {
   let text = form.keyword.trim();
   const manual: ManualSegment[] = [];
-  const secrets = form.secrets.map((secret) => secret.trim()).filter(Boolean);
+  const manualDecisions: ProtectionRequest["decisions"][number][] = [];
+  const secrets = form.secrets
+    .map((secret) => ({ ...secret, value: secret.value.trim() }))
+    .filter((secret) => Boolean(secret.value));
   secrets.forEach((secret, index) => {
     text += `\n${secretFieldLabel(index)}：`;
     const start = text.length;
-    text += secret;
+    text += secret.value;
     manual.push({ start, end: text.length, entityType: "custom" });
+    manualDecisions.push({
+      start,
+      end: text.length,
+      policy: secret.exposeToMemory ? "keep_original" : "move_to_vault"
+    });
   });
   if (form.note.trim()) text += `\n备注：${form.note.trim()}`;
-  return { text, manual };
+  return { text, manual, manualDecisions };
 }
 
 const suggestionCards: readonly { readonly title: string; readonly example: string }[] = [
@@ -315,7 +333,7 @@ function HomePage({ active, memoryWritePolicy, onSaved }: { readonly active: boo
   const [credentialRevealError, setCredentialRevealError] = useState<string>();
   const [approval, setApproval] = useState<PreparedMemoryWrite>();
   const [error, setError] = useState<string>();
-  const [saveForm, setSaveForm] = useState<SaveFormState>({ keyword: "", secrets: [""], note: "" });
+  const [saveForm, setSaveForm] = useState<SaveFormState>({ keyword: "", secrets: [emptyManualSecret()], note: "" });
   const [isSaving, setIsSaving] = useState(false);
   const [receipt, setReceipt] = useState<DemoSaveReceipt>();
   const [sendShortcut, setSendShortcut] = useState<SendShortcut>(initialSendShortcut);
@@ -590,16 +608,18 @@ function HomePage({ active, memoryWritePolicy, onSaved }: { readonly active: boo
   }
 
   async function saveRecord(): Promise<void> {
-    const secrets = saveForm.secrets.map((secret) => secret.trim()).filter(Boolean);
+    const secrets = saveForm.secrets
+      .map((secret) => ({ ...secret, value: secret.value.trim() }))
+      .filter((secret) => Boolean(secret.value));
     if (!saveForm.keyword.trim() || !secrets.length) return;
     setIsSaving(true);
     setError(undefined);
     setReceipt(undefined);
-    const { text, manual } = buildManualCapture({ ...saveForm, secrets });
+    const { text, manual, manualDecisions } = buildManualCapture({ ...saveForm, secrets });
     try {
-      const nextReceipt = await saveExplicitProtectedText(text, manual);
+      const nextReceipt = await saveExplicitProtectedText(text, manual, manualDecisions);
       setReceipt(nextReceipt);
-      setSaveForm((current) => ({ ...current, secrets: [""] }));
+      setSaveForm((current) => ({ ...current, secrets: [emptyManualSecret()] }));
       onSaved();
     } catch (cause) {
       setError(messageFrom(cause));
@@ -612,23 +632,36 @@ function HomePage({ active, memoryWritePolicy, onSaved }: { readonly active: boo
     if (next === mode) return;
     setMode(next);
     if (next === "manual") {
-      setSaveForm({ keyword: "", secrets: [""], note: "" });
+      setSaveForm({ keyword: "", secrets: [emptyManualSecret()], note: "" });
       setReceipt(undefined);
       setError(undefined);
     }
   }
 
   function updateSecret(index: number, value: string): void {
-    setSaveForm((current) => ({ ...current, secrets: current.secrets.map((secret, i) => i === index ? value : secret) }));
+    setSaveForm((current) => ({
+      ...current,
+      secrets: current.secrets.map((secret, i) => i === index ? { ...secret, value } : secret)
+    }));
+  }
+
+  function updateSecretMemoryVisibility(index: number, exposeToMemory: boolean): void {
+    setSaveForm((current) => ({
+      ...current,
+      secrets: current.secrets.map((secret, i) => i === index ? { ...secret, exposeToMemory } : secret)
+    }));
   }
 
   function addSecretField(): void {
     if (saveForm.secrets.length >= 20) return;
-    setSaveForm((current) => ({ ...current, secrets: [...current.secrets, ""] }));
+    setSaveForm((current) => ({ ...current, secrets: [...current.secrets, emptyManualSecret()] }));
   }
 
   function removeSecretField(index: number): void {
-    setSaveForm((current) => ({ ...current, secrets: current.secrets.length > 1 ? current.secrets.filter((_, i) => i !== index) : [""] }));
+    setSaveForm((current) => ({
+      ...current,
+      secrets: current.secrets.length > 1 ? current.secrets.filter((_, i) => i !== index) : [emptyManualSecret()]
+    }));
   }
 
   async function encryptSelection(selected: { readonly start: number; readonly end: number }): Promise<void> {
@@ -737,13 +770,19 @@ function HomePage({ active, memoryWritePolicy, onSaved }: { readonly active: boo
         <div className="mvp-manual-fields">
           <label className="mvp-field-row"><span className="mvp-field-name">关键词</span><div className="mvp-field-control"><input value={saveForm.keyword} onChange={(event) => setSaveForm({ ...saveForm, keyword: event.target.value })} placeholder="输入需要保密信息的关键词，方便索引" /></div></label>
           {saveForm.secrets.map((secret, index) => (
-            <label className="mvp-field-row" key={index}>
-              <span className="mvp-field-name">{secretFieldLabel(index)}</span>
-              <div className="mvp-field-control">
-                <ManualSecretInput value={secret} onChange={(value) => updateSecret(index, value)} />
-                {index > 0 && <button type="button" className="mvp-field-remove" aria-label="删除这条保密信息" onClick={() => removeSecretField(index)}><X size={18} /></button>}
-              </div>
-            </label>
+            <div className="mvp-manual-secret-group" key={index}>
+              <label className="mvp-field-row">
+                <span className="mvp-field-name">{secretFieldLabel(index)}</span>
+                <div className="mvp-field-control">
+                  <ManualSecretInput value={secret.value} onChange={(value) => updateSecret(index, value)} />
+                  {index > 0 && <button type="button" className="mvp-field-remove" aria-label="删除这条保密信息" onClick={() => removeSecretField(index)}><X size={18} /></button>}
+                </div>
+              </label>
+              <label className={`mvp-memory-visibility${secret.exposeToMemory ? " enabled" : ""}`}>
+                <input type="checkbox" checked={secret.exposeToMemory} onChange={(event) => updateSecretMemoryVisibility(index, event.target.checked)} />
+                <span><strong>允许 AI 读取此项</strong><small>勾选后以明文写入 Memory，不创建 Credential</small></span>
+              </label>
+            </div>
           ))}
           <div className="mvp-add-secret-row"><button type="button" className="mvp-add-secret" disabled={saveForm.secrets.length >= 20} onClick={addSecretField}><Plus size={13} weight="bold" />{saveForm.secrets.length >= 20 ? "最多添加 20 项" : "添加保密信息"}</button></div>
           <label className="mvp-field-row"><span className="mvp-field-name">备注</span><div className="mvp-field-control"><input value={saveForm.note} onChange={(event) => setSaveForm({ ...saveForm, note: event.target.value })} placeholder="备注信息" /></div></label>
@@ -751,7 +790,7 @@ function HomePage({ active, memoryWritePolicy, onSaved }: { readonly active: boo
         <div className="mvp-composer-bar">
           <ModeToggle mode={mode} onSwitch={switchMode} />
           <span className="mvp-composer-spacer" />
-          <button className="mvp-send mvp-primary" type="button" disabled={isSaving || !saveForm.keyword.trim() || !saveForm.secrets.some((secret) => secret.trim())} onClick={() => void saveRecord()} aria-label="保存"><IcSave /></button>
+          <button className="mvp-send mvp-primary" type="button" disabled={isSaving || !saveForm.keyword.trim() || !saveForm.secrets.some((secret) => secret.value.trim())} onClick={() => void saveRecord()} aria-label="保存"><IcSave /></button>
         </div>
         </div>
       </section>

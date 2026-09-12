@@ -15,7 +15,7 @@ const receipt: DemoSaveReceipt = {
   savedAt: "2026-09-12T08:30:00.000Z",
   storage: "sqlite",
   preview: {
-    protectedContent: "Figma 账号\n保密信息：[CREDENTIAL:550e8400-e29b-41d4-a716-446655440000]\n来源：[SOURCE:SOURCE_00000000-0000-4000-8000-000000000001]",
+    protectedContent: "Figma 账号\n保密信息：[CREDENTIAL:550e8400-e29b-41d4-a716-446655440000]\n保密信息二：允许 AI 读取的公开说明\n来源：[SOURCE:SOURCE_00000000-0000-4000-8000-000000000001]",
     credentials: [],
     safetyChecks: [],
     readyToSave: true
@@ -32,6 +32,7 @@ describe("ManualCaptureMemoryProjector", () => {
     expect(memory.content).toContain(receipt.credentialIds[0]!);
     expect(memory.content).toContain(receipt.sourceId);
     expect(memory.content).toContain("记录方式：用户主动保存");
+    expect(memory.content).toContain("保密信息二：允许 AI 读取的公开说明");
     expect(memory.content).not.toContain("主动保存了与“Figma 账号”相关的信息");
   });
 

@@ -1008,16 +1008,18 @@ export async function saveSuggestedProtectedText(text: string): Promise<DemoSave
 
 export async function saveExplicitProtectedText(
   text: string,
-  manual: NonNullable<ProtectionRequest["manual"]>
+  manual: NonNullable<ProtectionRequest["manual"]>,
+  manualDecisions: ProtectionRequest["decisions"] = manual.map(({ start, end }) => ({ start, end, policy: "move_to_vault" as const }))
 ): Promise<DemoSaveReceipt> {
   const analysis = await analyzeInput(text);
   const detected = analysis.entities.filter((entity) => !manual.some((segment) => segment.start < entity.end && entity.start < segment.end));
+  const requestedManualPolicies = new Map(manualDecisions.map((decision) => [`${decision.start}:${decision.end}`, decision]));
   return saveDemoCandidate({
     text,
     manual,
     decisions: [
       ...detected.map(({ start, end, suggestedPolicy: policy }) => ({ start, end, policy })),
-      ...manual.map(({ start, end }) => ({ start, end, policy: "move_to_vault" as const }))
+      ...manual.map(({ start, end }) => requestedManualPolicies.get(`${start}:${end}`) ?? ({ start, end, policy: "move_to_vault" as const }))
     ].sort((left, right) => left.start - right.start)
   });
 }

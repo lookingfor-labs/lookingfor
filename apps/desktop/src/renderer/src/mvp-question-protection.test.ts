@@ -91,10 +91,13 @@ describe("MVP question protection", () => {
     }]);
   });
 
-  it("turns every manually entered secret into an explicit protected range", () => {
+  it("applies each manually entered field's selected Memory visibility", () => {
     const capture = buildManualCapture({
       keyword: "家庭路由器",
-      secrets: ["123456", "中文口令"],
+      secrets: [
+        { value: "123456", exposeToMemory: false },
+        { value: "中文口令", exposeToMemory: true }
+      ],
       note: "书房"
     });
 
@@ -106,6 +109,10 @@ describe("MVP question protection", () => {
     }))).toEqual([
       expect.objectContaining({ value: "123456", entityType: "custom" }),
       expect.objectContaining({ value: "中文口令", entityType: "custom" })
+    ]);
+    expect(capture.manualDecisions).toEqual([
+      expect.objectContaining({ policy: "move_to_vault" }),
+      expect.objectContaining({ policy: "keep_original" })
     ]);
   });
 
