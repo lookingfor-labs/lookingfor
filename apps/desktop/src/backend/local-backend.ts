@@ -19,6 +19,7 @@ import { FileMemoryStore, type MemoryStore } from "@brainbuddy/memory-engine/mem
 import { SqliteSourceStore } from "@brainbuddy/memory-engine/sqlite";
 import { buildProtectionPlan, PrivacyEngine, toProtectionPreview } from "@brainbuddy/privacy-engine";
 import { ModelConnectionStore, type ModelConnection } from "./model-connection-store";
+import { ManualCaptureMemoryProjector } from "./manual-capture-memory-projector";
 
 export class LocalBackend {
   readonly memories: MemoryStore;
@@ -36,6 +37,7 @@ export class LocalBackend {
   });
   readonly #sources: SqliteSourceStore;
   readonly #modelConnection: ModelConnectionStore;
+  readonly #manualCaptureMemories: ManualCaptureMemoryProjector;
 
   constructor(options: {
     readonly applicationDataDirectory: string;
@@ -57,6 +59,7 @@ export class LocalBackend {
       ...(options.initialModelConnection ? { initialConnection: options.initialModelConnection } : {})
     });
     this.memories = new FileMemoryStore({ rootDirectory: options.memoryDirectory });
+    this.#manualCaptureMemories = new ManualCaptureMemoryProjector(this.memories);
     this.access = new DatabaseAccessGate({ metadataPath: join(options.applicationDataDirectory, "database-access.json") });
     this.records = {
       search: (query, limit) => {
@@ -84,7 +87,9 @@ export class LocalBackend {
   }
 
   save(text: string, decisions: readonly ProtectionDecision[], kind: SourceSubmissionKind = "capture", manual: readonly ManualSegmentRange[] = []): DemoSaveReceipt {
-    return this.#sources.save(this.#plan(text, decisions, manual), text, kind);
+    const receipt = this.#sources.save(this.#plan(text, decisions, manual), text, kind);
+    if (kind === "capture") this.#manualCaptureMemories.project(receipt);
+    return receipt;
   }
 
   saveSuggested(text: string, kind: SourceSubmissionKind = "conversation"): DemoSaveReceipt {

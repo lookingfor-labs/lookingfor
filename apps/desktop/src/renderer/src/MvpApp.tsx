@@ -75,7 +75,7 @@ import {
 } from "./App";
 
 type MvpPage = "home" | "database" | "memories" | "settings";
-type DatabaseRecordTab = "saved" | "conversation";
+export type DatabaseRecordTab = "saved" | "credentials" | "conversation";
 export type SendShortcut = "enter" | "mod-enter";
 
 const SEND_SHORTCUT_STORAGE_KEY = "lookingfor.send-shortcut";
@@ -279,7 +279,7 @@ export function MvpApp(): JSX.Element {
       </div>
     </aside>
     <main className="mvp-main">
-      <div hidden={page !== "home"}><HomePage active={page === "home"} memoryWritePolicy={runtimeSettings?.memoryWritePolicy ?? "require_approval"} onSaved={() => setRecordRefresh((value) => value + 1)} /></div>
+      <div hidden={page !== "home"}><HomePage active={page === "home"} memoryWritePolicy={runtimeSettings?.memoryWritePolicy ?? "auto_apply"} onSaved={() => { setRecordRefresh((value) => value + 1); setMemoryRefresh((value) => value + 1); }} /></div>
       <div hidden={page !== "database"}><DatabasePage refreshToken={recordRefresh} /></div>
       <div hidden={page !== "memories"}><MemoriesPage refreshToken={memoryRefresh} onRefresh={() => setMemoryRefresh((value) => value + 1)} /></div>
       <div hidden={page !== "settings"}><SettingsPage runtimeSettings={runtimeSettings} onRuntimeSettingsChange={setRuntimeSettings} /></div>
@@ -732,7 +732,7 @@ function HomePage({ active, memoryWritePolicy, onSaved }: { readonly active: boo
       </>
     ) : (
       <section className="mvp-card mvp-composer mvp-manual">
-        {receipt && <div className="mvp-protect-banner safe" role="status"><CheckCircle size={18} weight="fill" /><span>已安全保存：Source {receipt.sourceId}，生成 {receipt.credentialIds.length} 个凭据引用，可在对话中让 Agent 整理到 Memory。</span></div>}
+        {receipt && <div className="mvp-protect-banner safe" role="status"><CheckCircle size={18} weight="fill" /><span>已保存 Source {receipt.sourceId} 和 {receipt.credentialIds.length} 条保密信息，并同步生成 Memory 索引。</span></div>}
         <div className="mvp-manual-body">
         <div className="mvp-manual-fields">
           <label className="mvp-field-row"><span className="mvp-field-name">关键词</span><div className="mvp-field-control"><input value={saveForm.keyword} onChange={(event) => setSaveForm({ ...saveForm, keyword: event.target.value })} placeholder="输入需要保密信息的关键词，方便索引" /></div></label>
@@ -1028,8 +1028,10 @@ function DatabasePage({ refreshToken }: { readonly refreshToken: number }): JSX.
   const [query, setQuery] = useState("");
   const [sources, setSources] = useState<readonly DemoSourceSummary[]>([]);
   const [credentials, setCredentials] = useState<readonly DemoCredentialSummary[]>([]);
-  const [selectedId, setSelectedId] = useState<string>();
-  const [revealed, setRevealed] = useState<DemoSourceReveal>();
+  const [selectedSourceId, setSelectedSourceId] = useState<string>();
+  const [selectedCredentialId, setSelectedCredentialId] = useState<string>();
+  const [revealedSource, setRevealedSource] = useState<DemoSourceReveal>();
+  const [revealedCredential, setRevealedCredential] = useState<DemoCredentialReveal>();
   const [access, setAccess] = useState<DatabaseAccessStatus>();
   const [unlockPassword, setUnlockPassword] = useState("");
   const [isUnlocking, setIsUnlocking] = useState(false);
@@ -1039,13 +1041,15 @@ function DatabasePage({ refreshToken }: { readonly refreshToken: number }): JSX.
   async function load(search = query): Promise<void> {
     setIsLoading(true);
     setError(undefined);
-    setRevealed(undefined);
+    setRevealedSource(undefined);
+    setRevealedCredential(undefined);
     try {
       const result = await searchDemoSources(search);
       const nextVisibleSources = result.sources.filter(({ kind }) => databaseRecordTab(kind) === activeTab);
       setSources(result.sources);
       setCredentials(result.credentials);
-      setSelectedId((current) => nextVisibleSources.some(({ sourceId }) => sourceId === current) ? current : nextVisibleSources[0]?.sourceId);
+      setSelectedSourceId((current) => nextVisibleSources.some(({ sourceId }) => sourceId === current) ? current : nextVisibleSources[0]?.sourceId);
+      setSelectedCredentialId((current) => result.credentials.some(({ credentialId }) => credentialId === current) ? current : result.credentials[0]?.credentialId);
     } catch (cause) {
       setError(messageFrom(cause));
     } finally {
@@ -1060,23 +1064,35 @@ function DatabasePage({ refreshToken }: { readonly refreshToken: number }): JSX.
   const savedSources = sources.filter(({ kind }) => databaseRecordTab(kind) === "saved");
   const conversationSources = sources.filter(({ kind }) => databaseRecordTab(kind) === "conversation");
   const visibleSources = activeTab === "saved" ? savedSources : conversationSources;
-  const selected = visibleSources.find(({ sourceId }) => sourceId === selectedId);
-  const linkedCredentials = credentials.filter(({ sourceIds }) => selectedId && sourceIds.includes(selectedId));
+  const selectedSource = visibleSources.find(({ sourceId }) => sourceId === selectedSourceId);
+  const selectedCredential = credentials.find(({ credentialId }) => credentialId === selectedCredentialId);
+  const linkedCredentials = credentials.filter(({ sourceIds }) => selectedSourceId && sourceIds.includes(selectedSourceId));
 
   function selectTab(tab: DatabaseRecordTab): void {
-    const nextSources = tab === "saved" ? savedSources : conversationSources;
     setActiveTab(tab);
-    setSelectedId(nextSources[0]?.sourceId);
-    setRevealed(undefined);
+    if (tab === "credentials") setSelectedCredentialId(credentials[0]?.credentialId);
+    else setSelectedSourceId((tab === "saved" ? savedSources : conversationSources)[0]?.sourceId);
+    setRevealedSource(undefined);
+    setRevealedCredential(undefined);
   }
 
-  async function reveal(): Promise<void> {
-    if (!selected) return;
+  async function revealSource(sourceId = selectedSource?.sourceId): Promise<void> {
+    if (!sourceId) return;
     if (access && !access.unlocked) {
       setError("请先输入数据库密码解锁原文。");
       return;
     }
-    try { setRevealed(await revealDemoSource(selected.sourceId)); }
+    try { setRevealedSource(await revealDemoSource(sourceId)); }
+    catch (cause) { setError(messageFrom(cause)); }
+  }
+
+  async function revealSelectedCredential(): Promise<void> {
+    if (!selectedCredential) return;
+    if (access && !access.unlocked) {
+      setError("请先输入数据库密码解锁明文。");
+      return;
+    }
+    try { setRevealedCredential(await revealCredential(selectedCredential.credentialId)); }
     catch (cause) { setError(messageFrom(cause)); }
   }
 
@@ -1092,27 +1108,34 @@ function DatabasePage({ refreshToken }: { readonly refreshToken: number }): JSX.
   }
 
   async function lock(): Promise<void> {
-    setRevealed(undefined);
+    setRevealedSource(undefined);
+    setRevealedCredential(undefined);
     setAccess(await lockDatabase());
   }
 
   return <div className="mvp-page">
-    <PageHeader title="本地数据库" copy="搜索受保护的 Source 与 Credential，原文只在你主动查看时解锁。" />
+    <PageHeader title="本地数据库" copy="查看主动保存、对话来源和保密信息之间的关联。" />
     <div className="mvp-toolbar"><div className="mvp-search"><MagnifyingGlass size={19} /><input value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void load(); }} placeholder="搜索内容、Source ID 或凭据 ID" /></div><button className="mvp-secondary" type="button" disabled={isLoading} onClick={() => void load()}>{isLoading ? "查询中" : "查询"}</button>{access?.passwordConfigured && access.unlocked ? <button className="mvp-security-state is-button" type="button" onClick={() => void lock()}><LockOpen size={17} weight="fill" />已解锁 · 点击锁定</button> : <span className="mvp-security-state"><LockKey size={17} weight="fill" />{access?.passwordConfigured ? "原文已锁定" : "未设置访问密码"}</span>}</div>
     {error && <p className="mvp-alert error" role="alert">{error}</p>}
     {access?.passwordConfigured && !access.unlocked && <form className="mvp-unlock-bar" onSubmit={(event) => { event.preventDefault(); void unlock(); }}><LockKey size={19} weight="duotone" /><div><strong>数据库已锁定</strong><span>输入设置页配置的密码后，才能临时查看原文或重置数据库。</span></div><label className="mvp-visually-hidden" htmlFor="database-unlock-password">数据库密码</label><input id="database-unlock-password" type="password" autoComplete="current-password" value={unlockPassword} onChange={(event) => setUnlockPassword(event.target.value)} placeholder="数据库密码" /><button className="mvp-primary" type="submit" disabled={!unlockPassword || isUnlocking}>{isUnlocking ? "解锁中" : "解锁"}</button></form>}
     <section className="mvp-card mvp-database-card">
       <nav className="mvp-database-tabs" aria-label="数据库记录分类">
-        <button type="button" className={activeTab === "saved" ? "active" : ""} aria-pressed={activeTab === "saved"} onClick={() => selectTab("saved")}><FloppyDisk size={18} weight={activeTab === "saved" ? "fill" : "regular"} /><span><strong>信息保存</strong><small>主动保存的隐私信息</small></span><em>{savedSources.length}</em></button>
-        <button type="button" className={activeTab === "conversation" ? "active" : ""} aria-pressed={activeTab === "conversation"} onClick={() => selectTab("conversation")}><ChatCircleDots size={18} weight={activeTab === "conversation" ? "fill" : "regular"} /><span><strong>AI 对话</strong><small>对话及查询产生的记录</small></span><em>{conversationSources.length}</em></button>
+        <button type="button" className={activeTab === "saved" ? "active" : ""} aria-pressed={activeTab === "saved"} onClick={() => selectTab("saved")}><FloppyDisk size={18} weight={activeTab === "saved" ? "fill" : "regular"} /><span><strong>主动保存</strong><small>用户主动录入的信息</small></span><em>{savedSources.length}</em></button>
+        <button type="button" className={activeTab === "credentials" ? "active" : ""} aria-pressed={activeTab === "credentials"} onClick={() => selectTab("credentials")}><Key size={18} weight={activeTab === "credentials" ? "fill" : "regular"} /><span><strong>保密信息</strong><small>独立保存的 Credential</small></span><em>{credentials.length}</em></button>
+        <button type="button" className={activeTab === "conversation" ? "active" : ""} aria-pressed={activeTab === "conversation"} onClick={() => selectTab("conversation")}><ChatCircleDots size={18} weight={activeTab === "conversation" ? "fill" : "regular"} /><span><strong>对话记录</strong><small>对话产生的安全来源</small></span><em>{conversationSources.length}</em></button>
       </nav>
       <div className="mvp-banner"><ShieldCheck size={21} weight="duotone" /><div><strong>本地数据已保护</strong><span>{window.brainBuddy ? "Source 与凭据保存在 Electron userData 的本地 SQLite。" : "Source 与凭据保存在 desktop-dev 专用的本地 SQLite。"}</span></div></div>
       {isLoading && !sources.length
         ? <LoadingState label="正在读取本地记录" />
-        : visibleSources.length
-          ? <div className="mvp-table-wrap"><table><thead><tr><th>Source</th><th>类型</th><th>安全视图</th><th>凭据</th><th>保存时间</th></tr></thead><tbody>{visibleSources.map((source) => <tr key={source.sourceId} tabIndex={0} aria-selected={source.sourceId === selectedId} className={source.sourceId === selectedId ? "selected" : ""} onClick={() => { setSelectedId(source.sourceId); setRevealed(undefined); }} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSelectedId(source.sourceId); setRevealed(undefined); } }}><td><code>{source.sourceId}</code></td><td>{sourceKind(source.kind)}</td><td className="mvp-protected-cell">{source.protectedContent}</td><td>{source.credentialIds.length}</td><td>{formatTime(source.savedAt)}</td></tr>)}</tbody></table></div>
-          : <EmptyState icon={activeTab === "saved" ? <FloppyDisk size={30} /> : <ChatCircleDots size={30} />} title={query.trim() ? "当前分类没有匹配记录" : activeTab === "saved" ? "还没有保存的信息" : "还没有 AI 对话记录"} copy={query.trim() ? "可以调整搜索条件，或切换另一个分类查看。" : activeTab === "saved" ? "回到主页直接保存一条隐私信息，记录会显示在这里。" : "在主页与 lookingfor 对话后，本轮 Source 会显示在这里。"} />}
-      {selected && <div className="mvp-source-detail"><div><h2>{sourceKind(selected.kind)}记录</h2><dl><dt>Source ID</dt><dd><code>{selected.sourceId}</code></dd><dt>AI 安全视图</dt><dd>{selected.protectedContent}</dd><dt>关联凭据</dt><dd>{linkedCredentials.length ? linkedCredentials.map((credential) => <code key={credential.credentialId}>[CREDENTIAL:{credential.credentialId}]</code>) : "无"}</dd></dl></div><div className="mvp-secret-panel"><div><span>用户输入原文</span>{revealed && <button type="button" aria-label="关闭原文" onClick={() => setRevealed(undefined)}><X size={18} /></button>}</div>{revealed ? <pre>{revealed.originalContent}</pre> : <><LockKey size={28} weight="duotone" /><p>原文不会发送给 AI。点击后只在当前界面临时显示。</p><button className="mvp-secondary" type="button" onClick={() => void reveal()}><Eye size={17} />手动查看原文</button></>}</div></div>}
+        : activeTab === "credentials"
+          ? credentials.length
+            ? <div className="mvp-table-wrap"><table><thead><tr><th>类型</th><th>安全视图</th><th>Credential ID</th><th>关联记录</th><th>保存时间</th></tr></thead><tbody>{credentials.map((credential) => <tr key={credential.credentialId} tabIndex={0} aria-selected={credential.credentialId === selectedCredentialId} className={credential.credentialId === selectedCredentialId ? "selected" : ""} onClick={() => { setSelectedCredentialId(credential.credentialId); setRevealedCredential(undefined); setRevealedSource(undefined); }} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSelectedCredentialId(credential.credentialId); setRevealedCredential(undefined); setRevealedSource(undefined); } }}><td>{questionEntityTypeLabel(credential.entityType)}</td><td><code className="mvp-mask-value">{credential.maskedValue}</code></td><td><code>{credential.credentialId}</code></td><td>{credential.sourceIds.length}</td><td>{formatTime(credential.savedAt)}</td></tr>)}</tbody></table></div>
+            : <EmptyState icon={<Key size={30} />} title={query.trim() ? "没有匹配的保密信息" : "还没有保密信息"} copy={query.trim() ? "可以按 Credential ID、类型或关联内容查询。" : "保存包含敏感字段的信息后，Credential 会显示在这里。"} />
+          : visibleSources.length
+            ? <div className="mvp-table-wrap"><table><thead><tr><th>名称</th><th>Source ID</th><th>安全视图</th><th>凭据</th><th>保存时间</th></tr></thead><tbody>{visibleSources.map((source) => <tr key={source.sourceId} tabIndex={0} aria-selected={source.sourceId === selectedSourceId} className={source.sourceId === selectedSourceId ? "selected" : ""} onClick={() => { setSelectedSourceId(source.sourceId); setRevealedSource(undefined); }} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSelectedSourceId(source.sourceId); setRevealedSource(undefined); } }}><td><strong className="mvp-record-title">{sourceTitle(source)}</strong></td><td><code>{source.sourceId}</code></td><td className="mvp-protected-cell">{source.protectedContent}</td><td>{source.credentialIds.length}</td><td>{formatTime(source.savedAt)}</td></tr>)}</tbody></table></div>
+            : <EmptyState icon={activeTab === "saved" ? <FloppyDisk size={30} /> : <ChatCircleDots size={30} />} title={query.trim() ? "当前分类没有匹配记录" : activeTab === "saved" ? "还没有主动保存的信息" : "还没有对话记录"} copy={query.trim() ? "可以调整搜索条件，或切换另一个分类查看。" : activeTab === "saved" ? "回到主页直接保存一条信息，记录会显示在这里。" : "在主页与 lookingfor 对话后，本轮 Source 会显示在这里。"} />}
+      {activeTab !== "credentials" && selectedSource && <div className="mvp-source-detail"><div><h2>{sourceTitle(selectedSource)}</h2><dl><dt>记录类型</dt><dd>{sourceKind(selectedSource.kind)}</dd><dt>Source ID</dt><dd><code>{selectedSource.sourceId}</code></dd><dt>AI 安全视图</dt><dd>{selectedSource.protectedContent}</dd><dt>关联凭据</dt><dd>{linkedCredentials.length ? linkedCredentials.map((credential) => <button className="mvp-inline-reference" type="button" key={credential.credentialId} onClick={() => { setActiveTab("credentials"); setSelectedCredentialId(credential.credentialId); setRevealedSource(undefined); }}>[CREDENTIAL:{credential.credentialId}]</button>) : "无"}</dd>{selectedSource.kind === "capture" && <><dt>Memory 索引</dt><dd><code>{manualCaptureMemoryPathForSource(selectedSource.sourceId)}</code></dd></>}</dl></div><div className="mvp-secret-panel"><div><span>用户输入原文</span>{revealedSource?.sourceId === selectedSource.sourceId && <button type="button" aria-label="关闭原文" onClick={() => setRevealedSource(undefined)}><X size={18} /></button>}</div>{revealedSource?.sourceId === selectedSource.sourceId ? <pre>{revealedSource.originalContent}</pre> : <><LockKey size={28} weight="duotone" /><p>点击查看这条 Source 保存的完整输入。</p><button className="mvp-secondary" type="button" onClick={() => void revealSource()}><Eye size={17} />查看原文</button></>}</div></div>}
+      {activeTab === "credentials" && selectedCredential && <div className="mvp-credential-detail"><div className="mvp-credential-overview"><h2>{questionEntityTypeLabel(selectedCredential.entityType)}</h2><dl><dt>Credential ID</dt><dd><code>{selectedCredential.credentialId}</code></dd><dt>安全视图</dt><dd><code>{selectedCredential.maskedValue}</code></dd><dt>保存时间</dt><dd>{formatTime(selectedCredential.savedAt)}</dd><dt>关联记录</dt><dd>{selectedCredential.sourceIds.length}</dd></dl></div><div className="mvp-secret-panel"><div><span>保密信息明文</span>{revealedCredential?.credentialId === selectedCredential.credentialId && <button type="button" aria-label="关闭明文" onClick={() => setRevealedCredential(undefined)}><X size={18} /></button>}</div>{revealedCredential?.credentialId === selectedCredential.credentialId ? <pre>{revealedCredential.value}</pre> : <><Key size={28} weight="duotone" /><p>点击后从本地数据库解密这条 Credential。</p><button className="mvp-secondary" type="button" onClick={() => void revealSelectedCredential()}><Eye size={17} />查看明文</button></>}</div><section className="mvp-linked-sources"><h3>关联记录</h3>{selectedCredential.sourceIds.map((sourceId) => { const source = sources.find((candidate) => candidate.sourceId === sourceId); return <div key={sourceId}><div><strong>{source ? sourceTitle(source) : sourceId}</strong><code>{sourceId}</code></div><button className="mvp-secondary" type="button" onClick={() => void revealSource(sourceId)}><Eye size={16} />查看原文</button></div>; })}</section>{revealedSource && selectedCredential.sourceIds.includes(revealedSource.sourceId) && <section className="mvp-linked-source-reveal"><header><div><strong>关联记录原文</strong><code>{revealedSource.sourceId}</code></div><button type="button" aria-label="关闭关联记录原文" onClick={() => setRevealedSource(undefined)}><X size={18} /></button></header><pre>{revealedSource.originalContent}</pre></section>}</div>}
     </section>
   </div>;
 }
@@ -1149,7 +1172,7 @@ function MemoriesPage({ refreshToken, onRefresh }: { readonly refreshToken: numb
       <div className="mvp-memory-toolbar"><div className="mvp-search"><MagnifyingGlass size={19} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索 Memory 路径或内容" /></div><button className="mvp-secondary" type="button" disabled={isLoading} onClick={onRefresh}><ArrowClockwise size={17} />{isLoading ? "刷新中" : "刷新"}</button></div>
       <div className="mvp-memory-shell">
         <aside className="mvp-memory-tree"><div className="mvp-tree-root"><Folder size={18} weight="fill" />memories/<span>{filtered.length}</span></div>{filtered.map((memory) => <button key={memory.path} type="button" className={memory.path === selected?.path ? "active" : ""} onClick={() => setSelectedPath(memory.path)}><FileMd size={17} /><span>{memory.path.replace(/^memories\//u, "")}</span><CaretRight size={14} /></button>)}</aside>
-        <article className="mvp-memory-editor">{isLoading && !memories.length ? <LoadingState label="正在读取 Memory" /> : selected ? <><header><div><strong>{selected.path}</strong><span>版本 {selected.version.slice(0, 12)}</span></div><time>{formatTime(selected.updatedAt)}</time></header><div className="mvp-info-strip"><ShieldCheck size={18} />这是 AI 可见的本地记忆，不应包含真实 Secret。</div><pre>{selected.content}</pre></> : <EmptyState icon={<FileMd size={30} />} title="还没有 Memory" copy="在主页对话中让 Agent 记住一条信息，批准写入后会显示在这里。" />}</article>
+        <article className="mvp-memory-editor">{isLoading && !memories.length ? <LoadingState label="正在读取 Memory" /> : selected ? <><header><div><strong>{selected.path}</strong><span>版本 {selected.version.slice(0, 12)}</span></div><time>{formatTime(selected.updatedAt)}</time></header><div className="mvp-info-strip"><ShieldCheck size={18} />这是 AI 可见的本地记忆，不应包含真实 Secret。</div><pre>{selected.content}</pre></> : <EmptyState icon={<FileMd size={30} />} title="还没有 Memory" copy="主动保存信息或在对话中让 Agent 记住内容后，Memory 会显示在这里。" />}</article>
       </div>
     </section>
   </div>;
@@ -1162,7 +1185,7 @@ function SettingsPage({ runtimeSettings, onRuntimeSettingsChange }: {
   const [access, setAccess] = useState<DatabaseAccessStatus>();
   const [modelConnection, setModelConnection] = useState<ModelConnectionStatus>();
   const [modelForm, setModelForm] = useState({ apiKey: "", baseUrl: "https://api.deepseek.com", modelId: "deepseek-v4-flash" });
-  const [storageForm, setStorageForm] = useState<LocalStorageSettings>({ memoryDirectory: "", databaseDirectory: "", memoryWritePolicy: "require_approval" });
+  const [storageForm, setStorageForm] = useState<LocalStorageSettings>({ memoryDirectory: "", databaseDirectory: "", memoryWritePolicy: "auto_apply" });
   const [passwords, setPasswords] = useState({ current: "", next: "", confirm: "" });
   const [resetOpen, setResetOpen] = useState(false);
   const [resetPhrase, setResetPhrase] = useState("");
@@ -1287,7 +1310,7 @@ function SettingsPage({ runtimeSettings, onRuntimeSettingsChange }: {
       <section className="mvp-card mvp-setting-card mvp-storage-settings"><div className="mvp-setting-icon"><Folder size={22} weight="duotone" /></div><div><h2>本地存储位置</h2><p>分别配置受控 Markdown 根目录和 SQLite 数据库目录；必须填写绝对路径。</p><form className="mvp-storage-form" onSubmit={(event) => void saveStorageSettings(event)}><label>本地记忆目录<input value={storageForm.memoryDirectory} required onChange={(event) => setStorageForm({ ...storageForm, memoryDirectory: event.target.value })} placeholder="例如 /Users/you/lookingfor/memories" /></label><label>数据库文件目录<input value={storageForm.databaseDirectory} required onChange={(event) => setStorageForm({ ...storageForm, databaseDirectory: event.target.value })} placeholder="例如 /Users/you/lookingfor/database" /></label><div className="mvp-form-actions"><button className="mvp-primary" type="submit" disabled={isSavingStorage || !storageForm.memoryDirectory.trim() || !storageForm.databaseDirectory.trim()}>{isSavingStorage ? "切换中" : "保存存储位置"}</button></div></form><p className="mvp-field-note">保存时会创建不存在的目录并立即切换；不会自动搬移旧目录中的数据。</p></div></section>
       <section className="mvp-card mvp-setting-card mvp-model-settings"><div className="mvp-setting-icon"><Key size={22} weight="duotone" /></div><div><div className="mvp-setting-heading"><div><h2>AI 连接</h2><p>连接信息由本地后端加密保存。API 地址可指向 DeepSeek 或兼容的中转服务。</p></div><span className={`mvp-status-pill ${modelConnection?.configured ? "unlocked" : "unset"}`}>{modelConnection?.configured ? "已配置" : "尚未配置"}</span></div><form className="mvp-model-form" onSubmit={(event) => void saveModelConnection(event)}><label className="mvp-model-url">API 地址<input type="url" value={modelForm.baseUrl} required maxLength={2000} onChange={(event) => setModelForm({ ...modelForm, baseUrl: event.target.value })} placeholder="https://api.deepseek.com" /></label><label>模型名称<input value={modelForm.modelId} required maxLength={100} onChange={(event) => setModelForm({ ...modelForm, modelId: event.target.value })} placeholder="deepseek-v4-flash" /></label><label className="mvp-model-key">API Key<input type="password" autoComplete="new-password" minLength={8} maxLength={512} required value={modelForm.apiKey} onChange={(event) => setModelForm({ ...modelForm, apiKey: event.target.value })} placeholder={modelConnection?.maskedApiKey ? `当前 ${modelConnection.maskedApiKey}，输入新 Key 可替换` : "输入 API Key"} /></label><div className="mvp-form-actions"><button className="mvp-secondary" type="button" disabled={isTestingModel || isSavingModel || !modelForm.baseUrl.trim() || !modelForm.modelId.trim() || (modelForm.apiKey.trim().length > 0 && modelForm.apiKey.trim().length < 8) || (!modelConnection?.configured && modelForm.apiKey.trim().length < 8)} onClick={() => void checkModelConnection()}><CheckCircle size={16} />{isTestingModel ? "测试中" : "测试连接"}</button><button className="mvp-primary" type="submit" disabled={isSavingModel || isTestingModel || modelForm.apiKey.trim().length < 8 || !modelForm.baseUrl.trim() || !modelForm.modelId.trim()}>{isSavingModel ? "保存中" : modelConnection?.configured ? "更新连接" : "保存连接"}</button></div></form><p className="mvp-field-note">测试连接会发送内容为“1”的请求并将输出限制为 1 token；Key 留空时使用已保存的连接。默认地址为 DeepSeek API，默认模型为 deepseek-v4-flash。</p></div></section>
       <section className="mvp-card mvp-setting-card mvp-password-settings"><div className="mvp-setting-icon"><LockKey size={22} weight="duotone" /></div><div><div className="mvp-setting-heading"><div><h2>数据库访问密码</h2><p>用于解锁原文查看和数据库重置；它不会替代独立的本机加密密钥。</p></div><span className={`mvp-status-pill ${access?.passwordConfigured ? (access.unlocked ? "unlocked" : "locked") : "unset"}`}>{access?.passwordConfigured ? (access.unlocked ? "已设置 · 已解锁" : "已设置 · 已锁定") : "尚未设置"}</span></div><form className="mvp-password-form" onSubmit={(event) => void savePassword(event)}>{access?.passwordConfigured && <label>当前密码<input type="password" autoComplete="current-password" required value={passwords.current} onChange={(event) => setPasswords({ ...passwords, current: event.target.value })} /></label>}<label>新密码<input type="password" autoComplete="new-password" minLength={8} maxLength={128} required value={passwords.next} onChange={(event) => setPasswords({ ...passwords, next: event.target.value })} placeholder="至少 8 个字符" /></label><label>确认新密码<input type="password" autoComplete="new-password" minLength={8} maxLength={128} required value={passwords.confirm} onChange={(event) => setPasswords({ ...passwords, confirm: event.target.value })} /></label><div className="mvp-form-actions">{access?.passwordConfigured && access.unlocked && <button className="mvp-secondary" type="button" onClick={() => void lockNow()}><LockKey size={16} />立即锁定</button>}<button className="mvp-primary" type="submit" disabled={isSavingPassword || passwords.next.length < 8 || passwords.confirm.length < 8}>{isSavingPassword ? "保存中" : access?.passwordConfigured ? "更新密码" : "设置密码"}</button></div></form><p className="mvp-field-note">忘记此密码后无法从界面查看原文或清库。密码校验信息会持久化在当前运行模式的本地数据目录。</p></div></section>
-      <section className="mvp-card mvp-setting-card mvp-security-settings"><div className="mvp-setting-icon"><ShieldCheck size={22} weight="duotone" /></div><div><h2>隐私与安全</h2><p>这些规则由运行时强制执行，不依赖模型自行遵守。</p><div className="mvp-policy-row mvp-policy-control"><div><strong>Memory 写入方式</strong><span>自动写入仍限制在 Memory 根目录，并为每次修改保存 Revision。</span></div><select aria-label="Memory 写入方式" value={runtimeSettings?.memoryWritePolicy ?? "require_approval"} disabled={!runtimeSettings} onChange={(event) => void changeMemoryWritePolicy(event.target.value as MemoryWritePolicy)}><option value="require_approval">每次需要批准</option><option value="auto_apply">允许 Agent 自动写入</option></select></div><div className="mvp-policy-row"><div><strong>凭据明文不发送给 AI</strong><span>Agent 只接收 Credential ID 与 Source 关联，不接收明文或掩码。</span></div><CheckCircle size={22} weight="fill" /></div><div className="mvp-policy-row"><div><strong>受控 Memory 根目录</strong><span>路径逃逸和符号链接会被拒绝。</span></div><CheckCircle size={22} weight="fill" /></div></div></section>
+      <section className="mvp-card mvp-setting-card mvp-security-settings"><div className="mvp-setting-icon"><ShieldCheck size={22} weight="duotone" /></div><div><h2>隐私与安全</h2><p>这些规则由运行时强制执行，不依赖模型自行遵守。</p><div className="mvp-policy-row mvp-policy-control"><div><strong>Memory 写入方式</strong><span>默认允许 Agent 自动写入，每次修改仍会保存 Revision。</span></div><select aria-label="Memory 写入方式" value={runtimeSettings?.memoryWritePolicy ?? "auto_apply"} disabled={!runtimeSettings} onChange={(event) => void changeMemoryWritePolicy(event.target.value as MemoryWritePolicy)}><option value="require_approval">每次需要批准</option><option value="auto_apply">允许 Agent 自动写入</option></select></div><div className="mvp-policy-row"><div><strong>凭据明文不发送给 AI</strong><span>Agent 只接收 Credential ID 与 Source 关联，不接收明文或掩码。</span></div><CheckCircle size={22} weight="fill" /></div><div className="mvp-policy-row"><div><strong>受控 Memory 根目录</strong><span>路径逃逸和符号链接会被拒绝。</span></div><CheckCircle size={22} weight="fill" /></div></div></section>
       <section className="mvp-card mvp-setting-card mvp-danger-settings"><div className="mvp-setting-icon"><Warning size={22} weight="duotone" /></div><div><h2>危险操作</h2><p>重置只清除本地数据库中的 Source、Credential 及其关联；不会删除 Memory、Agent 调试记录、模型连接配置、数据库访问密码或设备加密密钥。</p>{!resetOpen ? <div className="mvp-danger-row"><div><strong>重置数据库</strong><span>此操作不可撤销，执行前会要求再次确认。</span></div><button className="mvp-danger-button" type="button" onClick={() => { setResetOpen(true); setMessage(undefined); }}><Trash size={16} />重置数据库</button></div> : <div className="mvp-reset-confirm" role="group" aria-labelledby="reset-database-title"><div><strong id="reset-database-title">确认永久清除数据库？</strong><span>请输入“清除数据库”完成二次确认。</span></div><label>确认文本<input value={resetPhrase} autoFocus onChange={(event) => setResetPhrase(event.target.value)} placeholder="清除数据库" /></label>{access?.passwordConfigured && !access.unlocked && <label>数据库密码<input type="password" autoComplete="current-password" value={resetPassword} onChange={(event) => setResetPassword(event.target.value)} placeholder="先验证数据库密码" /></label>}<div className="mvp-form-actions"><button className="mvp-secondary" type="button" disabled={isResetting} onClick={() => { setResetOpen(false); setResetPhrase(""); setResetPassword(""); }}>取消</button><button className="mvp-danger-button" type="button" disabled={isResetting || resetPhrase !== "清除数据库" || Boolean(access?.passwordConfigured && !access.unlocked && !resetPassword)} onClick={() => void confirmReset()}>{isResetting ? "正在清除" : "确认清除数据库"}</button></div></div>}</div></section>
     </div>
   </div>;
@@ -1303,6 +1326,14 @@ function LoadingState({ label }: { readonly label: string }): JSX.Element {
 
 function sourceKind(kind: DemoSourceSummary["kind"]): string {
   return ({ capture: "保存", local_search: "本地查询", conversation: "AI 对话" } as const)[kind];
+}
+
+export function sourceTitle(source: Pick<DemoSourceSummary, "protectedContent">): string {
+  return source.protectedContent.split(/\r?\n/u).find((line) => line.trim())?.trim() || "未命名记录";
+}
+
+export function manualCaptureMemoryPathForSource(sourceId: string): string {
+  return `memories/manual-captures/${sourceId.replace(/^SOURCE_/u, "")}.md`;
 }
 
 export function databaseRecordTab(kind: DemoSourceSummary["kind"]): DatabaseRecordTab {

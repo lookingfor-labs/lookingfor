@@ -17,19 +17,17 @@ describe("LocalBackend", () => {
     const analysis = first.analyze(original);
     const receipt = first.save(original, analysis.entities.map(({ start, end, suggestedPolicy: policy }) => ({ start, end, policy })));
     const apiCredential = receipt.preview.credentials.find(({ entityType }) => entityType === "api_key")!;
-    first.memories.apply({
-      operation: "create",
-      path: "memories/figma.md",
-      content: `Figma 凭据 ${apiCredential.ref}\n\n来源：[SOURCE:${receipt.sourceId}]`,
-      reason: "integration test"
-    });
+    const projectedMemory = first.memories.list()[0]!;
+    expect(projectedMemory.path).toContain("memories/manual-captures/");
+    expect(projectedMemory.content).toContain(apiCredential.ref);
+    expect(projectedMemory.content).not.toContain("sk-local-backend-secret-123456");
     first.access.configure(undefined, "persistent-password");
     first.close();
 
     const reopened = createBackend(dataDirectory);
     expect(reopened.access.status()).toEqual({ passwordConfigured: true, unlocked: false });
     expect(reopened.search(receipt.sourceId).sources.map(({ sourceId }) => sourceId)).toContain(receipt.sourceId);
-    expect(reopened.memories.list().map(({ path }) => path)).toEqual(["memories/figma.md"]);
+    expect(reopened.memories.list().map(({ path }) => path)).toEqual([projectedMemory.path]);
     expect(() => reopened.reveal(receipt.sourceId)).toThrow("DATABASE_LOCKED");
     expect(() => reopened.revealCredential(apiCredential.credentialId)).toThrow("DATABASE_LOCKED");
     reopened.access.unlock("persistent-password");
@@ -58,6 +56,7 @@ describe("LocalBackend", () => {
       "admin@example.com",
       secret
     ]);
+    expect(backend.memories.list()).toEqual([]);
     backend.close();
   });
 
@@ -146,6 +145,10 @@ describe("LocalBackend", () => {
     expect(receipt.preview.credentials).toEqual([
       expect.objectContaining({ entityType: "custom", maskedValue: "••••••" })
     ]);
+    const projectedMemory = backend.memories.list()[0]!;
+    expect(projectedMemory.content).toContain(receipt.sourceId);
+    expect(projectedMemory.content).toContain(receipt.credentialIds[0]!);
+    expect(projectedMemory.content).not.toContain(secret);
     backend.close();
   });
 

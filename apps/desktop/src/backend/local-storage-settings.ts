@@ -17,7 +17,7 @@ export class LocalStorageSettingsStore {
     this.#defaults = {
       memoryDirectory: join(options.applicationDataDirectory, "memories"),
       databaseDirectory: options.applicationDataDirectory,
-      memoryWritePolicy: "require_approval"
+      memoryWritePolicy: "auto_apply"
     };
     if (existsSync(this.#metadataPath)) chmodSync(this.#metadataPath, 0o600);
   }

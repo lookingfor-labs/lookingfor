@@ -591,7 +591,7 @@ function RawView({ title, value, empty }: { readonly title: string; readonly val
 
 function AgentPreviewPage(): JSX.Element {
   const [message, setMessage] = useState("找到我保存的 Figma 登录信息，并把可复用的账号和凭据引用更新到 memories/accounts.md。处理完成后告诉我引用了哪些记录。");
-  const [writePolicy, setWritePolicy] = useState<MemoryWritePolicy>("require_approval");
+  const [writePolicy, setWritePolicy] = useState<MemoryWritePolicy>("auto_apply");
   const [draft, setDraft] = useState<AgentRunDraft>();
   const [events, setEvents] = useState<readonly AgentRuntimeEvent[]>([]);
   const [runId, setRunId] = useState<string>();
