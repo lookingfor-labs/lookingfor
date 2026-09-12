@@ -2,9 +2,28 @@ import type { PrivacyAnalysis } from "@brainbuddy/domain";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { activeQuestionProtectionRanges, buildManualCapture, buildQuestionProtectionDecisions, ManualSecretInput, prepareMvpAgentRun } from "./MvpApp";
+import { activeQuestionProtectionRanges, buildManualCapture, buildQuestionProtectionDecisions, ManualSecretInput, prepareMvpAgentRun, shouldSendQuestion } from "./MvpApp";
 
 describe("MVP question protection", () => {
+  it("switches between Enter and platform-modified Enter submission", () => {
+    const key = (overrides: Partial<Parameters<typeof shouldSendQuestion>[0]> = {}) => ({
+      key: "Enter",
+      shiftKey: false,
+      metaKey: false,
+      ctrlKey: false,
+      isComposing: false,
+      ...overrides
+    });
+
+    expect(shouldSendQuestion(key(), "enter")).toBe(true);
+    expect(shouldSendQuestion(key({ shiftKey: true }), "enter")).toBe(false);
+    expect(shouldSendQuestion(key(), "mod-enter")).toBe(false);
+    expect(shouldSendQuestion(key({ metaKey: true }), "mod-enter")).toBe(true);
+    expect(shouldSendQuestion(key({ ctrlKey: true }), "mod-enter")).toBe(true);
+    expect(shouldSendQuestion(key({ isComposing: true }), "enter")).toBe(false);
+    expect(shouldSendQuestion(key({ key: "a" }), "enter")).toBe(false);
+  });
+
   it("shows manually entered confidential information as plaintext while editing", () => {
     const markup = renderToStaticMarkup(createElement(ManualSecretInput, {
       value: "visible-secret",

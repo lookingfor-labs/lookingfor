@@ -379,6 +379,22 @@ body.mvp-route { min-width: 0; background: #f6f7fb; }
 .mvp-scratch-wrap { position: relative; display: inline-flex; align-items: center; }
 .mvp-scratch-tip { position: absolute; bottom: calc(100% + 6px); left: 0; z-index: 30; display: none; width: max-content; max-width: 220px; border-radius: 8px; background: #262a3a; box-shadow: 0 8px 20px rgba(20, 24, 40, .25); padding: 6px 10px; color: #fff; font-size: 11px; line-height: 1.5; pointer-events: none; }
 .mvp-scratch-wrap:hover .mvp-scratch-tip { display: block; }
+.mvp-send-shortcut { position: relative; display: inline-flex; align-items: center; gap: 6px; }
+.mvp-send-shortcut:has(.mvp-send-shortcut-menu) { z-index: 22; }
+.mvp-send-shortcut-label { color: var(--mvp-muted); font-size: 12px; white-space: nowrap; }
+.mvp-send-shortcut-toggle { display: grid; place-items: center; width: 32px; height: 32px; border: 1px solid transparent; border-radius: 9px; background: #f4f5f8; padding: 0; color: #596174; cursor: pointer; transition-property: background-color, border-color, color, transform; transition-duration: 140ms; }
+.mvp-send-shortcut-toggle:hover { border-color: #dfe1e8; background: #eceef3; color: var(--mvp-text); }
+.mvp-send-shortcut-toggle:active { transform: scale(.96); }
+.mvp-send-shortcut-toggle[aria-expanded="true"] { border-color: #d3cdf2; background: var(--mvp-accent-soft); color: var(--mvp-accent-strong); }
+.mvp-send-shortcut-menu { position: absolute; right: 0; bottom: calc(100% + 8px); z-index: 23; display: grid; gap: 4px; width: 224px; border: 1px solid var(--mvp-line); border-radius: 12px; background: var(--mvp-panel); box-shadow: 0 14px 30px rgba(30, 34, 54, .14); padding: 6px; }
+.mvp-send-shortcut-menu button { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 46px; border: 0; border-radius: 9px; background: transparent; padding: 0 10px; color: #3a4152; cursor: pointer; text-align: left; }
+.mvp-send-shortcut-menu button:hover { background: #f1f2f7; }
+.mvp-send-shortcut-menu button.active { background: var(--mvp-accent-soft); color: var(--mvp-accent-strong); }
+.mvp-send-shortcut-menu button > span { min-width: 0; }
+.mvp-send-shortcut-menu button strong, .mvp-send-shortcut-menu button small { display: block; }
+.mvp-send-shortcut-menu button strong { font-size: 12px; }
+.mvp-send-shortcut-menu button small { margin-top: 2px; color: var(--mvp-muted); font-size: 10px; }
+.mvp-send-shortcut-menu button > svg { flex: 0 0 auto; margin-left: auto; color: var(--mvp-accent); }
 .mvp-composer-bar .mvp-send { width: 32px; height: 32px; min-height: 32px; padding: 0; border-radius: 9px; }
 .mvp-composer-bar .mvp-send.mvp-primary { border: 1px solid #141414; background: #141414; color: #fff; }
 .mvp-composer-bar .mvp-send.mvp-primary:hover:not(:disabled) { border-color: #080808; background: #080808; }
@@ -424,6 +440,7 @@ body.mvp-route { min-width: 0; background: #f6f7fb; }
   .mvp-brand { min-height: 40px; padding: 0; }.mvp-brand-mark { width: 30px; height: 30px; border-radius: 9px; font-size: 15px; }
   .mvp-sidebar nav { display: flex; gap: 4px; overflow-x: auto; padding-top: 8px; }.mvp-sidebar nav button { flex: 0 0 auto; min-height: 40px; padding-inline: 10px; }
   .mvp-sidebar-foot { display: none; }
+  .mvp-send-shortcut-label { display: none; }
   .mvp-main { padding: 24px 16px 40px; }
   .mvp-page-head h1 { font-size: 29px; }
   .mvp-section { padding: 18px; }

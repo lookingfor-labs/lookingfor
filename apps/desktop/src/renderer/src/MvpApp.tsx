@@ -76,6 +76,9 @@ import {
 
 type MvpPage = "home" | "database" | "memories" | "settings";
 type DatabaseRecordTab = "saved" | "conversation";
+export type SendShortcut = "enter" | "mod-enter";
+
+const SEND_SHORTCUT_STORAGE_KEY = "lookingfor.send-shortcut";
 
 const navigation = [
   { id: "home", label: "主页", icon: House },
@@ -121,6 +124,37 @@ const suggestionCards: readonly { readonly title: string; readonly example: stri
 ];
 
 const secretOrdinal = ["二", "三", "四", "五", "六", "七", "八", "九", "十", "十一", "十二", "十三", "十四", "十五", "十六", "十七", "十八", "十九", "二十"];
+
+export function shouldSendQuestion(event: {
+  readonly key: string;
+  readonly shiftKey: boolean;
+  readonly metaKey: boolean;
+  readonly ctrlKey: boolean;
+  readonly isComposing: boolean;
+}, shortcut: SendShortcut): boolean {
+  if (event.key !== "Enter" || event.isComposing) return false;
+  if (shortcut === "mod-enter") return event.metaKey || event.ctrlKey;
+  return !event.shiftKey;
+}
+
+function initialSendShortcut(): SendShortcut {
+  if (typeof window === "undefined") return "enter";
+  try {
+    return window.localStorage.getItem(SEND_SHORTCUT_STORAGE_KEY) === "mod-enter" ? "mod-enter" : "enter";
+  } catch {
+    return "enter";
+  }
+}
+
+function saveSendShortcut(shortcut: SendShortcut): void {
+  try { window.localStorage.setItem(SEND_SHORTCUT_STORAGE_KEY, shortcut); }
+  catch { /* The shortcut still applies for the current session. */ }
+}
+
+function modifierKeyLabel(): string {
+  if (typeof navigator === "undefined") return "⌘";
+  return /Mac|iPhone|iPad|iPod/u.test(navigator.userAgent) ? "⌘" : "Ctrl";
+}
 
 function secretFieldLabel(index: number): string {
   if (index <= 0) return "保密信息";
@@ -284,6 +318,7 @@ function HomePage({ active, memoryWritePolicy, onSaved }: { readonly active: boo
   const [saveForm, setSaveForm] = useState<SaveFormState>({ keyword: "", secrets: [""], note: "" });
   const [isSaving, setIsSaving] = useState(false);
   const [receipt, setReceipt] = useState<DemoSaveReceipt>();
+  const [sendShortcut, setSendShortcut] = useState<SendShortcut>(initialSendShortcut);
   const questionSequence = useRef(0);
   const messageSequence = useRef(0);
   const questionRef = useRef<HTMLTextAreaElement>(null);
@@ -678,7 +713,7 @@ function HomePage({ active, memoryWritePolicy, onSaved }: { readonly active: boo
           <section className="mvp-card mvp-composer">
             <QuestionProtectionNotice analysis={merged} preview={questionPreview} decisions={questionDecisions} isChecking={isCheckingQuestion} error={questionProtectionError} text={question} onSaveEntity={saveEncryption} onRemoveEntity={removeEncryption} />
             <div className="mvp-composer-body">
-            <textarea id="mvp-question" ref={questionRef} value={question} disabled={isRunning} onChange={(event) => updateQuestion(event.target.value)} onSelect={(event) => { const element = event.currentTarget; const start = element.selectionStart ?? 0; const end = element.selectionEnd ?? 0; setSelection(start === end ? undefined : { start: Math.min(start, end), end: Math.max(start, end) }); }} placeholder="输入你想记住或查询的内容" />
+            <textarea id="mvp-question" ref={questionRef} value={question} disabled={isRunning} onChange={(event) => updateQuestion(event.target.value)} onKeyDown={(event) => { if (!shouldSendQuestion({ key: event.key, shiftKey: event.shiftKey, metaKey: event.metaKey, ctrlKey: event.ctrlKey, isComposing: event.nativeEvent.isComposing }, sendShortcut)) return; event.preventDefault(); if (canSendAuto) void runAgent(); }} onSelect={(event) => { const element = event.currentTarget; const start = element.selectionStart ?? 0; const end = element.selectionEnd ?? 0; setSelection(start === end ? undefined : { start: Math.min(start, end), end: Math.max(start, end) }); }} placeholder="输入你想记住或查询的内容" />
             <div className="mvp-composer-bar">
               <ModeToggle mode={mode} onSwitch={switchMode} />
               <span className="mvp-scratch-wrap">
@@ -686,9 +721,10 @@ function HomePage({ active, memoryWritePolicy, onSaved }: { readonly active: boo
                 <span id="mvp-scratch-tip" className="mvp-scratch-tip" role="tooltip">在输入框划取文字后自动加入敏感字段</span>
               </span>
               <span className="mvp-composer-spacer" />
+              {!isRunning && <SendShortcutControl shortcut={sendShortcut} onChange={(next) => { setSendShortcut(next); saveSendShortcut(next); }} />}
               {isRunning
                 ? <button className="mvp-send mvp-primary" type="button" disabled={!runId} onClick={() => { if (runId) void cancelAgentRun(runId); }} aria-label="取消发送"><IcCancelSend /></button>
-                : <button className="mvp-send mvp-primary" type="button" disabled={!canSendAuto} onClick={() => void runAgent()} aria-label="发送"><IcSend /></button>}
+                : <button className="mvp-send mvp-primary" type="button" disabled={!canSendAuto} onClick={() => void runAgent()} aria-label="发送" aria-keyshortcuts={sendShortcut === "enter" ? "Enter" : "Meta+Enter Control+Enter"}><IcSend /></button>}
             </div>
             </div>
           </section>
@@ -754,6 +790,40 @@ function ModeToggle({ mode, onSwitch }: { readonly mode: "auto" | "manual"; read
           {option.value === "auto" ? <Sparkle size={16} weight="fill" /> : <IcHandwrite />}
           <span><strong>{option.label}</strong><small>{option.hint}</small></span>
           {mode === option.value && <CheckCircle size={16} weight="fill" />}
+        </button>)}
+      </div>
+    </>}
+  </div>;
+}
+
+function SendShortcutControl({ shortcut, onChange }: {
+  readonly shortcut: SendShortcut;
+  readonly onChange: (shortcut: SendShortcut) => void;
+}): JSX.Element {
+  const [open, setOpen] = useState(false);
+  const modifier = modifierKeyLabel();
+  useEffect(() => {
+    if (!open) return undefined;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [open]);
+  const options: readonly { readonly value: SendShortcut; readonly label: string; readonly hint: string }[] = [
+    { value: "enter", label: "Enter 发送", hint: "Shift + Enter 换行" },
+    { value: "mod-enter", label: `${modifier} + Enter 发送`, hint: "Enter 换行" }
+  ];
+  const currentLabel = shortcut === "enter" ? "Enter 发送" : `${modifier} + Enter 发送`;
+  return <div className="mvp-send-shortcut">
+    <span className="mvp-send-shortcut-label">{currentLabel}</span>
+    <button type="button" className="mvp-send-shortcut-toggle" onClick={() => setOpen((value) => !value)} aria-label="切换发送快捷键" aria-haspopup="menu" aria-expanded={open} title="切换发送快捷键"><CaretDown size={14} /></button>
+    {open && <>
+      <div className="mvp-mode-backdrop" onClick={() => setOpen(false)} />
+      <div className="mvp-send-shortcut-menu" role="menu" aria-label="发送快捷键">
+        {options.map((option) => <button key={option.value} type="button" role="menuitemradio" aria-checked={shortcut === option.value} className={shortcut === option.value ? "active" : ""} onClick={() => { onChange(option.value); setOpen(false); }}>
+          <span><strong>{option.label}</strong><small>{option.hint}</small></span>
+          {shortcut === option.value && <CheckCircle size={16} weight="fill" />}
         </button>)}
       </div>
     </>}
