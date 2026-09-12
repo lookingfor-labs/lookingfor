@@ -6,6 +6,7 @@ import { createFauxCore, fauxAssistantMessage, fauxToolCall as coreFauxToolCall 
 import { DemoMemorySession } from "@brainbuddy/memory-engine/memory";
 import {
   createAgentRuntime,
+  createDeepSeekAgentRuntime,
   createFileAgentRunRecorder,
   requiresDurableMemory,
   type AgentRuntimeEvent,
@@ -27,6 +28,39 @@ function fauxToolCall(...args: Parameters<typeof coreFauxToolCall>): ReturnType<
 }
 
 describe("AgentRuntime", () => {
+  it("caps output tokens for custom OpenAI-compatible models", async () => {
+    const originalFetch = globalThis.fetch;
+    let requestBody: Record<string, unknown> | undefined;
+    globalThis.fetch = async (_input, init) => {
+      requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return new Response(JSON.stringify({ error: { message: "stop after capturing the request" } }), {
+        status: 400,
+        headers: { "content-type": "application/json" }
+      });
+    };
+
+    try {
+      const runtime = createDeepSeekAgentRuntime({
+        apiKey: "test-api-key",
+        baseUrl: "https://models.example.test/v1",
+        modelId: "custom-compatible-model",
+        records: protectedRecords(),
+        memories: new DemoMemorySession()
+      });
+      const draft = runtime.prepare({
+        message: "Capture this request",
+        conversationSourceId: "SOURCE_QUERY",
+        writePolicy: "auto_apply"
+      });
+
+      await runtime.start(draft.draftId, () => undefined).done;
+
+      expect(requestBody?.max_tokens).toBe(4_096);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("separates required writes, read-only queries, and model-chosen Memory decisions", async () => {
     const faux = createFauxCore({ tokensPerSecond: 0 });
     faux.setResponses([fauxAssistantMessage(fauxToolCall("brainbuddy_finish", {
@@ -199,9 +233,9 @@ describe("AgentRuntime", () => {
       conversationSourceId: "SOURCE_QUERY",
       writePolicy: "require_approval"
     });
-    const events: string[] = [];
+    const events: AgentRuntimeEvent[] = [];
 
-    const result = await runtime.start(draft.draftId, (event) => events.push(event.type)).done;
+    const result = await runtime.start(draft.draftId, (event) => events.push(event)).done;
 
     expect(result).toMatchObject({
       status: "completed",
@@ -212,8 +246,15 @@ describe("AgentRuntime", () => {
       ],
       budgets: { toolBatchCount: 1, toolCallCount: 1, modelRequestCount: 2, finishAttemptCount: 1 }
     });
-    expect(events).toContain("tool_result");
-    expect(events.at(-1)).toBe("agent_completed");
+    expect(events.some(({ type }) => type === "tool_result")).toBe(true);
+    expect(JSON.stringify(events)).not.toContain("maskedValue");
+    expect(JSON.stringify(events)).not.toContain("••••••••");
+    expect(events.find(({ type }) => type === "tool_result")).toMatchObject({
+      result: {
+        credentials: [{ credentialId: "CREDENTIAL_FIGMA", sourceIds: ["SOURCE_FIGMA"] }]
+      }
+    });
+    expect(events.at(-1)?.type).toBe("agent_completed");
   });
 
   it("finds records and Memory when a model combines searchable terms into one phrase", async () => {

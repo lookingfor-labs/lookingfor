@@ -8,7 +8,8 @@ export type EntityType =
   | "high_entropy_secret"
   | "person"
   | "company"
-  | "project";
+  | "project"
+  | "custom";
 
 export type RiskLevel = "low" | "medium" | "high" | "critical";
 
@@ -28,6 +29,7 @@ export interface DetectedEntity {
   readonly suggestedPolicy: ProtectionPolicy;
   readonly recognizerId: string;
   readonly replacementToken?: string;
+  readonly note?: string | undefined;
 }
 
 export interface PrivacyAnalysis {

@@ -74,7 +74,7 @@ const systemPrompt = `你是 BrainBuddy 的对话模型。用户可能提问、�
 
 规则：
 1. 根据用户消息、Source、Credential 和 Memory 候选给出回复。
-2. 不得猜测、还原或输出凭据原文。凭据引用保持锁定状态。
+2. 不得猜测、还原或输出凭据原文或掩码。Credential 候选只提供不透明 ID 与 Source 关联，引用必须保持锁定状态。
 3. 必须调用 brainbuddy_respond 返回结构化结果。
 4. 创建 Memory 时只能使用 memories/ 下的相对 Markdown 路径。
 5. 更新 Memory 时只能选择上下文中已有的 Memory Path，并原样返回其 version 作为 expectedVersion。
@@ -194,8 +194,8 @@ function buildDraft(
   const sources = input.sources.slice(0, MAX_SOURCES).map(({ sourceId, kind, protectedContent, credentialIds, savedAt }) => ({
     sourceId, kind, protectedContent, credentialIds, savedAt
   }));
-  const credentials = input.credentials.slice(0, MAX_CREDENTIALS).map(({ credentialId, entityType, maskedValue, sourceIds, savedAt }) => ({
-    credentialId, entityType, maskedValue, sourceIds, savedAt
+  const credentials = input.credentials.slice(0, MAX_CREDENTIALS).map(({ credentialId, sourceIds }) => ({
+    credentialId, sourceIds
   }));
   const memories = input.memories.map(({ path, content, sourceIds, credentialIds, updatedAt, version }) => ({
     path, content, sourceIds, credentialIds, updatedAt, version

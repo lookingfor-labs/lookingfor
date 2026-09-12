@@ -1,5 +1,6 @@
 import { fileURLToPath } from "node:url";
 import react from "@vitejs/plugin-react";
+import viteSvgr from "vite-plugin-svgr";
 import { config as loadDotEnv } from "dotenv";
 import { defineConfig } from "vite";
 import { aiConversationMiddleware } from "./src/dev/ai-conversation-middleware";
@@ -27,7 +28,8 @@ export default defineConfig({
       ...(initialModelConnection ? { initialModelConnection } : {}),
       agentRunLogDirectory: fileURLToPath(new URL("../../.it-runner/logs/desktop-dev/agent-runs", import.meta.url))
     }),
-    react()
+    react(),
+    viteSvgr()
   ],
   cacheDir: fileURLToPath(new URL("../../node_modules/.vite/brainbuddy-browser", import.meta.url)),
   envDir: desktopRoot

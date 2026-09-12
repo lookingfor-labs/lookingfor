@@ -49,7 +49,7 @@ http://localhost:15174/demo
 
 - 敏感信息识别、Source 保存和离线查询在本地完成。
 - MVP 主页和 Demo 04/05 会在用户主动发起后调用 DeepSeek。
-- MVP 主页默认要求用户批准 Agent 的每次 Memory 写入。
+- MVP 主页默认允许 Agent 自动写入 Memory，每次修改仍会保存可撤销的 Revision。
 - AI 只能通过受控工具搜索记录、读取 Memory 和精确修改 `memories/` 下的 Markdown。
 - Renderer 启用沙箱和上下文隔离，通过窄 IPC 请求主进程分析文本。
 - DeepSeek 回复中的工具和文件动作只是可观察的意图，04 不执行任何动作。

@@ -2,6 +2,7 @@ import type { EntityMapping, ProtectionDecision } from "@brainbuddy/domain";
 import { describe, expect, it } from "vitest";
 import {
   ApiKeyRecognizer,
+  AsciiSegmentRecognizer,
   buildProtectionPlan,
   EmailRecognizer,
   GitHubTokenRecognizer,
@@ -26,7 +27,17 @@ describe("first recognizers", () => {
 
   it("detects email addresses", () => {
     const [entity] = new EmailRecognizer().recognize("联系 luyong@example.com 处理");
-    expect(entity).toMatchObject({ text: "luyong@example.com", type: "email" });
+    expect(entity).toMatchObject({ text: "luyong@example.com", type: "email", suggestedPolicy: "move_to_vault" });
+  });
+
+  it("marks whitespace-delimited ASCII segments for protection", () => {
+    const entities = new AsciiSegmentRecognizer().recognize("figma 账号：admin@example.com\t2025@ demo2025 123456 --- 中文");
+
+    expect(entities.map(({ text, suggestedPolicy }) => ({ text, suggestedPolicy }))).toEqual([
+      { text: "2025@", suggestedPolicy: "move_to_vault" },
+      { text: "demo2025", suggestedPolicy: "move_to_vault" },
+      { text: "123456", suggestedPolicy: "move_to_vault" }
+    ]);
   });
 
   it("detects a PEM private key block as one critical entity", () => {
@@ -111,6 +122,24 @@ describe("PrivacyEngine", () => {
     expect(result.analyzedAt).toBe("2025-01-01T00:00:00.000Z");
   });
 
+  it("detects the secret following an account email", () => {
+    const input = "figma 账号： admin@example.com  demopass2025@";
+    const result = new PrivacyEngine().analyze(input);
+
+    expect(result.entities).toEqual([
+      expect.objectContaining({
+        text: "admin@example.com",
+        type: "email",
+        suggestedPolicy: "move_to_vault"
+      }),
+      expect.objectContaining({
+        text: "demopass2025@",
+        type: "high_entropy_secret",
+        suggestedPolicy: "move_to_vault"
+      })
+    ]);
+  });
+
   it("detects a contextual API key without transforming the input", () => {
     const secret = "sk-sdsdasdadasdasdasdaniinnz";
     const result = new PrivacyEngine().analyze(`我的中转站的 key 是 ${secret}`);
@@ -148,20 +177,30 @@ describe("buildProtectionPlan", () => {
       end: entity.end,
       policy: entity.suggestedPolicy
     }));
+    const credentialIds = [
+      credentialId,
+      "550e8400-e29b-41d4-a716-446655440001"
+    ];
     const plan = buildProtectionPlan({
       text: input,
       entities,
       decisions,
-      credentialIdFactory: () => credentialId
+      credentialIdFactory: () => credentialIds.shift()!
     });
 
     expect(plan.protectedContent).toBe(
-      "张伟的账号 demo@example.com，key 是 [CREDENTIAL:550e8400-e29b-41d4-a716-446655440000]"
+      "张伟的账号 [CREDENTIAL:550e8400-e29b-41d4-a716-446655440000]，key 是 [CREDENTIAL:550e8400-e29b-41d4-a716-446655440001]"
     );
     expect(plan.credentialDrafts).toEqual([
       expect.objectContaining({
         credentialId,
         ref: "[CREDENTIAL:550e8400-e29b-41d4-a716-446655440000]",
+        entityType: "email",
+        secret: "demo@example.com"
+      }),
+      expect.objectContaining({
+        credentialId: "550e8400-e29b-41d4-a716-446655440001",
+        ref: "[CREDENTIAL:550e8400-e29b-41d4-a716-446655440001]",
         entityType: "api_key",
         secret: "sk-demoExample1234567890"
       })

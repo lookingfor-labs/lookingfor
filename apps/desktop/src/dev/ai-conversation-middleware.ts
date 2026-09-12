@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
 import type { Plugin } from "vite";
 import { z } from "zod";
 import { createDeepSeekAiConversationEngine, type AiConversationEngine } from "@brainbuddy/ai-conversation";
@@ -31,6 +32,27 @@ const memoryOperationSchema = z.discriminatedUnion("operation", [
   z.object({ operation: z.literal("update"), path: z.string(), expectedVersion: z.string(), content: z.string(), reason: z.string() })
 ]);
 
+const browserBackendSourceDirectories = [
+  "/apps/desktop/src/backend/",
+  "/apps/desktop/src/dev/",
+  "/packages/agent-runtime/src/",
+  "/packages/ai-conversation/src/",
+  "/packages/domain/src/",
+  "/packages/memory-engine/src/",
+  "/packages/privacy-engine/src/",
+  "/packages/shared-contracts/src/"
+] as const;
+const browserBackendWatchPaths = [
+  fileURLToPath(new URL(".", import.meta.url)),
+  fileURLToPath(new URL("../backend", import.meta.url)),
+  fileURLToPath(new URL("../../../../packages", import.meta.url))
+] as const;
+
+export function requiresBrowserBackendRestart(filePath: string): boolean {
+  const normalized = filePath.replace(/\\/gu, "/");
+  return browserBackendSourceDirectories.some((directory) => normalized.includes(directory));
+}
+
 export function aiConversationMiddleware(options: {
   readonly dataDirectory: string;
   readonly initialModelConnection?: ModelConnection;
@@ -52,6 +74,7 @@ export function aiConversationMiddleware(options: {
   let backend = createBackend();
   const activeAiRuns = new Set<string>();
   const activeAgentRuns = new Set<string>();
+  let restartScheduled = false;
   const getEngine = () => {
     if (engine) return engine;
     const connection = backend.requireModelConnection();
@@ -72,7 +95,19 @@ export function aiConversationMiddleware(options: {
 
   return {
     name: "brainbuddy-ai-conversation-dev-server",
+    handleHotUpdate({ file, server }) {
+      if (restartScheduled || !requiresBrowserBackendRestart(file)) return;
+      restartScheduled = true;
+      server.config.logger.info("browser backend source changed; restarting the Vite development server");
+      setTimeout(() => {
+        void server.restart().catch((cause: unknown) => {
+          server.config.logger.error(`browser backend restart failed: ${cause instanceof Error ? cause.message : String(cause)}`);
+        });
+      }, 0);
+      return [];
+    },
     configureServer(server) {
+      server.watcher.add(browserBackendWatchPaths);
       server.httpServer?.once("close", () => backend.close());
       server.middlewares.use(async (request, response, next) => {
         if (request.method !== "POST" || (!request.url?.startsWith("/api/privacy/") && !request.url?.startsWith("/api/ai-conversation/") && !request.url?.startsWith("/api/agent/") && !request.url?.startsWith("/api/memory/") && !request.url?.startsWith("/api/database/") && !request.url?.startsWith("/api/model/") && !request.url?.startsWith("/api/settings/"))) return next();
@@ -82,12 +117,12 @@ export function aiConversationMiddleware(options: {
             return sendJson(response, 200, backend.analyze(text));
           }
           if (request.url === "/api/privacy/preview") {
-            const { text, decisions } = ProtectionRequestSchema.parse(await readJson(request));
-            return sendJson(response, 200, backend.preview(text, decisions));
+            const { text, decisions, manual } = ProtectionRequestSchema.parse(await readJson(request));
+            return sendJson(response, 200, backend.preview(text, decisions, manual));
           }
           if (request.url === "/api/database/save") {
-            const { text, decisions } = ProtectionRequestSchema.parse(await readJson(request));
-            return sendJson(response, 200, backend.save(text, decisions, "capture"));
+            const { text, decisions, manual } = ProtectionRequestSchema.parse(await readJson(request));
+            return sendJson(response, 200, backend.save(text, decisions, "capture", manual));
           }
           if (request.url === "/api/database/search") {
             const { query } = SearchDemoSourcesRequestSchema.parse(await readJson(request));
@@ -152,7 +187,7 @@ export function aiConversationMiddleware(options: {
           if (request.url === "/api/agent/prepare") {
             const input = PrepareAgentRunRequestSchema.parse(await readJson(request));
             const receipt = input.decisions
-              ? backend.save(input.text, input.decisions, "conversation")
+              ? backend.save(input.text, input.decisions, "conversation", input.manual)
               : backend.saveSuggested(input.text, "conversation");
             return sendJson(response, 200, getAgentRuntime().prepare({
               message: receipt.preview.protectedContent,

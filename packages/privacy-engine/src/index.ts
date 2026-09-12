@@ -2,6 +2,7 @@ import type { DetectedEntity, EntityMapping, PrivacyAnalysis } from "@brainbuddy
 import { resolveOverlaps } from "./helpers.ts";
 import {
   ApiKeyRecognizer,
+  AsciiSegmentRecognizer,
   EmailRecognizer,
   GitHubTokenRecognizer,
   HighEntropySecretRecognizer,
@@ -36,7 +37,8 @@ export class PrivacyEngine {
       new KeywordRecognizer(),
       new EmailRecognizer(),
       new HighEntropySecretRecognizer(),
-      new KnownEntityRecognizer(options.knownEntities ?? [])
+      new KnownEntityRecognizer(options.knownEntities ?? []),
+      new AsciiSegmentRecognizer()
     ];
     this.now = options.now ?? (() => new Date());
   }

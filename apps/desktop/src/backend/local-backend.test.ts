@@ -16,25 +16,48 @@ describe("LocalBackend", () => {
     const first = createBackend(dataDirectory);
     const analysis = first.analyze(original);
     const receipt = first.save(original, analysis.entities.map(({ start, end, suggestedPolicy: policy }) => ({ start, end, policy })));
-    first.memories.apply({
-      operation: "create",
-      path: "memories/figma.md",
-      content: `Figma 凭据 ${receipt.preview.credentials[0]?.ref}\n\n来源：[SOURCE:${receipt.sourceId}]`,
-      reason: "integration test"
-    });
+    const apiCredential = receipt.preview.credentials.find(({ entityType }) => entityType === "api_key")!;
+    const projectedMemory = first.memories.list()[0]!;
+    expect(projectedMemory.path).toContain("memories/manual-captures/");
+    expect(projectedMemory.content).toContain(apiCredential.ref);
+    expect(projectedMemory.content).not.toContain("sk-local-backend-secret-123456");
     first.access.configure(undefined, "persistent-password");
     first.close();
 
     const reopened = createBackend(dataDirectory);
     expect(reopened.access.status()).toEqual({ passwordConfigured: true, unlocked: false });
-    expect(reopened.search("Figma").sources.map(({ sourceId }) => sourceId)).toContain(receipt.sourceId);
-    expect(reopened.memories.list().map(({ path }) => path)).toEqual(["memories/figma.md"]);
+    expect(reopened.search(receipt.sourceId).sources.map(({ sourceId }) => sourceId)).toContain(receipt.sourceId);
+    expect(reopened.memories.list().map(({ path }) => path)).toEqual([projectedMemory.path]);
     expect(() => reopened.reveal(receipt.sourceId)).toThrow("DATABASE_LOCKED");
-    expect(() => reopened.revealCredential(receipt.credentialIds[0]!)).toThrow("DATABASE_LOCKED");
+    expect(() => reopened.revealCredential(apiCredential.credentialId)).toThrow("DATABASE_LOCKED");
     reopened.access.unlock("persistent-password");
     expect(reopened.reveal(receipt.sourceId).originalContent).toBe(original);
-    expect(reopened.revealCredential(receipt.credentialIds[0]!).value).toBe("sk-local-backend-secret-123456");
+    expect(reopened.revealCredential(apiCredential.credentialId).value).toBe("sk-local-backend-secret-123456");
     reopened.close();
+  });
+
+  it("extracts a mixed-character secret following an account email", () => {
+    const dataDirectory = mkdtempSync(join(tmpdir(), "brainbuddy-local-backend-"));
+    directories.push(dataDirectory);
+    const backend = createBackend(dataDirectory);
+    const secret = "demopass2025@";
+    const original = `figma 账号： admin@example.com  ${secret}`;
+
+    const receipt = backend.saveSuggested(original);
+
+    expect(receipt.preview.protectedContent).toContain("figma");
+    expect(receipt.preview.protectedContent).not.toContain("admin@example.com");
+    expect(receipt.preview.protectedContent).not.toContain(secret);
+    expect(receipt.preview.credentials.map(({ entityType }) => entityType)).toEqual([
+      "email",
+      "high_entropy_secret"
+    ]);
+    expect(receipt.credentialIds.map((credentialId) => backend.revealCredential(credentialId).value)).toEqual([
+      "admin@example.com",
+      secret
+    ]);
+    expect(backend.memories.list()).toEqual([]);
+    backend.close();
   });
 
   it("imports, encrypts and persists the model connection behind a safe status", () => {
@@ -78,7 +101,7 @@ describe("LocalBackend", () => {
     const dataDirectory = mkdtempSync(join(tmpdir(), "brainbuddy-local-backend-"));
     directories.push(dataDirectory);
     const backend = createBackend(dataDirectory);
-    const original = "记录一下 agentflow 的密码是 77778888";
+    const original = "记录一下服务的密码是 77778888";
     const secret = "77778888";
     const start = original.indexOf(secret);
     const credentialId = "00e5dcad-aad5-4fe2-a520-3ca35e0d03a8";
@@ -91,12 +114,107 @@ describe("LocalBackend", () => {
     }], "conversation");
 
     expect(receipt.preview.protectedContent).toContain(
-      `记录一下 agentflow 的密码是 [CREDENTIAL:${credentialId}]`
+      `记录一下服务的密码是 [CREDENTIAL:${credentialId}]`
     );
     expect(receipt.preview.protectedContent).toContain(`来源：[SOURCE:${receipt.sourceId}]`);
     expect(receipt.preview.credentials).toEqual([
       expect.objectContaining({ credentialId, maskedValue: "777•••88" })
     ]);
+    backend.close();
+  });
+
+  it("uses an explicit manual range even when a short secret is not auto-detected", () => {
+    const dataDirectory = mkdtempSync(join(tmpdir(), "brainbuddy-local-backend-"));
+    directories.push(dataDirectory);
+    const backend = createBackend(dataDirectory);
+    const original = "路由器\n保密信息：123456\n备注：书房";
+    const secret = "123456";
+    const start = original.indexOf(secret);
+
+    const receipt = backend.save(original, [{
+      start,
+      end: start + secret.length,
+      policy: "move_to_vault"
+    }], "capture", [{
+      start,
+      end: start + secret.length,
+      entityType: "custom"
+    }]);
+
+    expect(receipt.preview.protectedContent).not.toContain(secret);
+    expect(receipt.preview.credentials).toEqual([
+      expect.objectContaining({ entityType: "custom", maskedValue: "••••••" })
+    ]);
+    const projectedMemory = backend.memories.list()[0]!;
+    expect(projectedMemory.content).toContain(receipt.sourceId);
+    expect(projectedMemory.content).toContain(receipt.credentialIds[0]!);
+    expect(projectedMemory.content).not.toContain(secret);
+    backend.close();
+  });
+
+  it("projects explicitly AI-readable manual fields as plaintext while vaulting the others", () => {
+    const dataDirectory = mkdtempSync(join(tmpdir(), "brainbuddy-local-backend-"));
+    directories.push(dataDirectory);
+    const backend = createBackend(dataDirectory);
+    const protectedSecret = "123456";
+    const readableValue = "门卡由行政保管";
+    const original = `办公室门禁\n保密信息：${protectedSecret}\n保密信息二：${readableValue}`;
+    const protectedStart = original.indexOf(protectedSecret);
+    const readableStart = original.indexOf(readableValue);
+    const manual = [
+      { start: protectedStart, end: protectedStart + protectedSecret.length, entityType: "custom" as const },
+      { start: readableStart, end: readableStart + readableValue.length, entityType: "custom" as const }
+    ];
+
+    const receipt = backend.save(original, [
+      { start: protectedStart, end: protectedStart + protectedSecret.length, policy: "move_to_vault" },
+      { start: readableStart, end: readableStart + readableValue.length, policy: "keep_original" }
+    ], "capture", manual);
+
+    expect(receipt.credentialIds).toHaveLength(1);
+    expect(receipt.preview.protectedContent).not.toContain(protectedSecret);
+    expect(receipt.preview.protectedContent).toContain(readableValue);
+    const projectedMemory = backend.memories.list()[0]!;
+    expect(projectedMemory.content).toContain(`[CREDENTIAL:${receipt.credentialIds[0]}]`);
+    expect(projectedMemory.content).toContain(`保密信息二：${readableValue}`);
+    expect(projectedMemory.content).not.toContain(protectedSecret);
+    backend.close();
+  });
+
+  it("lets a manual protection override an automatic detection with user metadata", () => {
+    const dataDirectory = mkdtempSync(join(tmpdir(), "brainbuddy-local-backend-"));
+    directories.push(dataDirectory);
+    const backend = createBackend(dataDirectory);
+    const original = "密码是 77778888";
+    const secret = "77778888";
+    const start = original.indexOf(secret);
+
+    const preview = backend.preview(original, [{
+      start,
+      end: start + secret.length,
+      policy: "move_to_vault"
+    }], [{
+      start,
+      end: start + secret.length,
+      entityType: "api_key",
+      note: "家庭服务器"
+    }]);
+
+    expect(preview.credentials[0]?.entityType).toBe("api_key");
+    expect(preview.protectedContent).toContain("备注：家庭服务器");
+    expect(preview.protectedContent).not.toContain(secret);
+    backend.close();
+  });
+
+  it("rejects overlapping manual protection ranges", () => {
+    const dataDirectory = mkdtempSync(join(tmpdir(), "brainbuddy-local-backend-"));
+    directories.push(dataDirectory);
+    const backend = createBackend(dataDirectory);
+
+    expect(() => backend.preview("abcdefgh", [], [
+      { start: 0, end: 4, entityType: "custom" },
+      { start: 3, end: 6, entityType: "custom" }
+    ])).toThrow("Manual protection ranges cannot overlap");
     backend.close();
   });
 });

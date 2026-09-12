@@ -1,8 +1,39 @@
 import type { PrivacyAnalysis } from "@brainbuddy/domain";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { buildQuestionProtectionDecisions, prepareMvpAgentRun } from "./MvpApp";
+import { activeQuestionProtectionRanges, buildManualCapture, buildQuestionProtectionDecisions, ManualSecretInput, prepareMvpAgentRun, shouldSendQuestion } from "./MvpApp";
 
 describe("MVP question protection", () => {
+  it("switches between Enter and platform-modified Enter submission", () => {
+    const key = (overrides: Partial<Parameters<typeof shouldSendQuestion>[0]> = {}) => ({
+      key: "Enter",
+      shiftKey: false,
+      metaKey: false,
+      ctrlKey: false,
+      isComposing: false,
+      ...overrides
+    });
+
+    expect(shouldSendQuestion(key(), "enter")).toBe(true);
+    expect(shouldSendQuestion(key({ shiftKey: true }), "enter")).toBe(false);
+    expect(shouldSendQuestion(key(), "mod-enter")).toBe(false);
+    expect(shouldSendQuestion(key({ metaKey: true }), "mod-enter")).toBe(true);
+    expect(shouldSendQuestion(key({ ctrlKey: true }), "mod-enter")).toBe(true);
+    expect(shouldSendQuestion(key({ isComposing: true }), "enter")).toBe(false);
+    expect(shouldSendQuestion(key({ key: "a" }), "enter")).toBe(false);
+  });
+
+  it("shows manually entered confidential information as plaintext while editing", () => {
+    const markup = renderToStaticMarkup(createElement(ManualSecretInput, {
+      value: "visible-secret",
+      onChange: () => undefined
+    }));
+
+    expect(markup).toContain('type="text"');
+    expect(markup).toContain('value="visible-secret"');
+  });
+
   it("refreshes database records immediately after the conversation Source is persisted", async () => {
     const calls: string[] = [];
     const draft = {
@@ -58,5 +89,52 @@ describe("MVP question protection", () => {
       policy: "move_to_vault",
       credentialId
     }]);
+  });
+
+  it("applies each manually entered field's selected Memory visibility", () => {
+    const capture = buildManualCapture({
+      keyword: "家庭路由器",
+      secrets: [
+        { value: "123456", exposeToMemory: false },
+        { value: "中文口令", exposeToMemory: true }
+      ],
+      note: "书房"
+    });
+
+    expect(capture.text).toBe("家庭路由器\n保密信息：123456\n保密信息二：中文口令\n备注：书房");
+    expect(capture.manual.map(({ entityType, ...range }) => ({
+      ...range,
+      value: capture.text.slice(range.start, range.end),
+      entityType
+    }))).toEqual([
+      expect.objectContaining({ value: "123456", entityType: "custom" }),
+      expect.objectContaining({ value: "中文口令", entityType: "custom" })
+    ]);
+    expect(capture.manualDecisions).toEqual([
+      expect.objectContaining({ policy: "move_to_vault" }),
+      expect.objectContaining({ policy: "keep_original" })
+    ]);
+  });
+
+  it("allows a keep-original entity to be selected for protection again", () => {
+    const analysis: PrivacyAnalysis = {
+      inputLength: 6,
+      analyzedAt: "2026-09-11T00:00:00.000Z",
+      entities: [{
+        text: "secret",
+        start: 0,
+        end: 6,
+        type: "custom",
+        risk: "medium",
+        reason: ["ASCII segment"],
+        suggestedPolicy: "move_to_vault",
+        recognizerId: "ascii-segment"
+      }]
+    };
+
+    expect(activeQuestionProtectionRanges(analysis, { "0:6": "keep_original" }, [])).toEqual([]);
+    expect(activeQuestionProtectionRanges(analysis, { "0:6": "move_to_vault" }, [])).toEqual([
+      expect.objectContaining({ start: 0, end: 6 })
+    ]);
   });
 });

@@ -71,7 +71,8 @@ const typeLabels: Readonly<Record<EntityType, string>> = {
   high_entropy_secret: "疑似密钥",
   person: "人物",
   company: "公司",
-  project: "项目"
+  project: "项目",
+  custom: "自定义"
 };
 
 const policyLabels: Readonly<Record<ProtectionPolicy, string>> = {
@@ -590,7 +591,7 @@ function RawView({ title, value, empty }: { readonly title: string; readonly val
 
 function AgentPreviewPage(): JSX.Element {
   const [message, setMessage] = useState("找到我保存的 Figma 登录信息，并把可复用的账号和凭据引用更新到 memories/accounts.md。处理完成后告诉我引用了哪些记录。");
-  const [writePolicy, setWritePolicy] = useState<MemoryWritePolicy>("require_approval");
+  const [writePolicy, setWritePolicy] = useState<MemoryWritePolicy>("auto_apply");
   const [draft, setDraft] = useState<AgentRunDraft>();
   const [events, setEvents] = useState<readonly AgentRuntimeEvent[]>([]);
   const [runId, setRunId] = useState<string>();
@@ -911,8 +912,8 @@ async function streamAiConversation(
   if (pending.trim()) onEvent((JSON.parse(pending) as { readonly event: AiConversationEvent }).event);
 }
 
-async function prepareAgentRun(text: string, writePolicy: MemoryWritePolicy, decisions?: ProtectionRequest["decisions"]): Promise<AgentRunDraft> {
-  const request = { text, writePolicy, ...(decisions ? { decisions } : {}) };
+async function prepareAgentRun(text: string, writePolicy: MemoryWritePolicy, decisions?: ProtectionRequest["decisions"], manual?: ProtectionRequest["manual"]): Promise<AgentRunDraft> {
+  const request = { text, writePolicy, ...(decisions ? { decisions } : {}), ...(manual && manual.length ? { manual } : {}) };
   if (window.brainBuddy) return window.brainBuddy.prepareAgentRun(request);
   return postJson<AgentRunDraft>("/api/agent/prepare", request);
 }
@@ -1002,6 +1003,24 @@ export async function saveSuggestedProtectedText(text: string): Promise<DemoSave
   return saveDemoCandidate({
     text,
     decisions: analysis.entities.map(({ start, end, suggestedPolicy: policy }) => ({ start, end, policy }))
+  });
+}
+
+export async function saveExplicitProtectedText(
+  text: string,
+  manual: NonNullable<ProtectionRequest["manual"]>,
+  manualDecisions: ProtectionRequest["decisions"] = manual.map(({ start, end }) => ({ start, end, policy: "move_to_vault" as const }))
+): Promise<DemoSaveReceipt> {
+  const analysis = await analyzeInput(text);
+  const detected = analysis.entities.filter((entity) => !manual.some((segment) => segment.start < entity.end && entity.start < segment.end));
+  const requestedManualPolicies = new Map(manualDecisions.map((decision) => [`${decision.start}:${decision.end}`, decision]));
+  return saveDemoCandidate({
+    text,
+    manual,
+    decisions: [
+      ...detected.map(({ start, end, suggestedPolicy: policy }) => ({ start, end, policy })),
+      ...manual.map(({ start, end }) => requestedManualPolicies.get(`${start}:${end}`) ?? ({ start, end, policy: "move_to_vault" as const }))
+    ].sort((left, right) => left.start - right.start)
   });
 }
 

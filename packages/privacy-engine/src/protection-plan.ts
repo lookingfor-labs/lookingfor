@@ -100,7 +100,8 @@ function validateEntity(text: string, entity: DetectedEntity, cursor: number): v
 }
 
 function protectedValue(entity: DetectedEntity, policy: ProtectionDecision["policy"], token: string): string {
-  return policy === "move_to_vault" ? token : entity.text;
+  if (policy !== "move_to_vault") return entity.text;
+  return entity.note ? `${token}（备注：${entity.note}）` : token;
 }
 
 function buildSafetyChecks(

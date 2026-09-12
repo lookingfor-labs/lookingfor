@@ -36,5 +36,5 @@ export function Root(): JSX.Element {
 
   return route === "demo"
     ? <DemoApp onOpenMvp={() => navigate("mvp")} />
-    : <MvpApp onOpenDemo={() => navigate("demo")} />;
+    : <MvpApp />;
 }

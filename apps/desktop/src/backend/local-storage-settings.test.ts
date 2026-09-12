@@ -15,7 +15,7 @@ describe("LocalStorageSettingsStore", () => {
     expect(new LocalStorageSettingsStore({ applicationDataDirectory }).get()).toEqual({
       memoryDirectory: join(applicationDataDirectory, "memories"),
       databaseDirectory: applicationDataDirectory,
-      memoryWritePolicy: "require_approval"
+      memoryWritePolicy: "auto_apply"
     });
   });
 

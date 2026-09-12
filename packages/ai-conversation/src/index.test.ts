@@ -42,6 +42,8 @@ describe("DeepSeekAiConversationEngine", () => {
     expect(draft.context).toMatchObject({ systemPrompt: expect.stringContaining("Credential Source Link 已在调用模型前由本地系统保存") });
     expect(draft.candidateIds).toContain("SOURCE_QUERY");
     expect((draft.context as { messages: { content: string }[] }).messages[0]?.content).toContain('"conversationSource"');
+    expect(JSON.stringify(draft.context)).not.toContain("maskedValue");
+    expect(JSON.stringify(draft.context)).not.toContain("••••••••");
     expect(events.some(({ type }) => type === "provider_payload")).toBe(true);
     const completed = events.find((event) => event.type === "completed");
     expect(completed).toMatchObject({
