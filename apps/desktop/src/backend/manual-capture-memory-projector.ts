@@ -37,5 +37,21 @@ export function manualCaptureMemoryContent(receipt: DemoSaveReceipt): string {
   const credentialReferences = receipt.credentialIds.length
     ? receipt.credentialIds.map((credentialId) => `[CREDENTIAL:${credentialId}]`).join("、")
     : "无";
-  return `# ${title}\n\n用户于 ${receipt.savedAt} 主动保存了与“${title}”相关的信息。\n\n- 保密信息：${credentialReferences}\n- 原始记录：[SOURCE:${receipt.sourceId}]\n`;
+  return `# ${title}\n\n- 记录方式：用户主动保存\n- 记录时间：${formatManualCaptureSavedAt(receipt.savedAt)}\n- 保密信息：${credentialReferences}\n- 原始记录：[SOURCE:${receipt.sourceId}]\n`;
+}
+
+export function formatManualCaptureSavedAt(savedAt: string, timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone): string {
+  const date = new Date(savedAt);
+  if (Number.isNaN(date.getTime())) return savedAt;
+  const values = Object.fromEntries(new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23"
+  }).formatToParts(date).map(({ type, value }) => [type, value]));
+  return `${values.year}-${values.month}-${values.day} ${values.hour}:${values.minute}:${values.second}（${timeZone}）`;
 }

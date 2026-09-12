@@ -3,6 +3,7 @@ import { DemoMemorySession } from "@brainbuddy/memory-engine/memory";
 import type { DemoSaveReceipt } from "@brainbuddy/domain";
 import {
   ManualCaptureMemoryProjector,
+  formatManualCaptureSavedAt,
   manualCaptureMemoryContent,
   manualCaptureMemoryPath
 } from "./manual-capture-memory-projector";
@@ -30,6 +31,14 @@ describe("ManualCaptureMemoryProjector", () => {
     expect(memory.content).toBe(manualCaptureMemoryContent(receipt));
     expect(memory.content).toContain(receipt.credentialIds[0]!);
     expect(memory.content).toContain(receipt.sourceId);
+    expect(memory.content).toContain("记录方式：用户主动保存");
+    expect(memory.content).not.toContain("主动保存了与“Figma 账号”相关的信息");
+  });
+
+  it("formats the saved time for people while retaining its timezone", () => {
+    expect(formatManualCaptureSavedAt("2026-09-12T08:27:09.937Z", "Asia/Hong_Kong"))
+      .toBe("2026-09-12 16:27:09（Asia/Hong_Kong）");
+    expect(formatManualCaptureSavedAt("not-a-date", "Asia/Hong_Kong")).toBe("not-a-date");
   });
 
   it("rejects conversation Sources", () => {
