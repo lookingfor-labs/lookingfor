@@ -243,6 +243,12 @@ export function aiConversationMiddleware(options: {
               currentPassword: z.string().max(128).optional(),
               newPassword: z.string().min(8).max(128)
             }).parse(await readJson(request));
+            if (activeAiRuns.size || activeAgentRuns.size) {
+              return sendJson(response, 409, { error: "数据库改密前请先等待 Run 完成或取消 Run。" });
+            }
+            drafts.clear();
+            engine = undefined;
+            agentRuntime = undefined;
             return sendJson(response, 200, backend.access.configure(input.currentPassword, input.newPassword));
           }
           if (request.url === "/api/database/unlock") {
@@ -250,6 +256,12 @@ export function aiConversationMiddleware(options: {
             return sendJson(response, 200, backend.access.unlock(password));
           }
           if (request.url === "/api/database/lock") {
+            if (activeAiRuns.size || activeAgentRuns.size) {
+              return sendJson(response, 409, { error: "锁定数据库前请先等待 Run 完成或取消 Run。" });
+            }
+            drafts.clear();
+            engine = undefined;
+            agentRuntime = undefined;
             return sendJson(response, 200, backend.access.lock());
           }
           if (request.url === "/api/database/assert-access") {

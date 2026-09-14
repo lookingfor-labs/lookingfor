@@ -1,5 +1,5 @@
-import { randomBytes, randomUUID } from "node:crypto";
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { ProtectedRecordReader } from "@brainbuddy/agent-runtime";
 import type {
@@ -14,7 +14,6 @@ import type {
   ProtectionPreview,
   SourceSubmissionKind
 } from "@brainbuddy/domain";
-import { DatabaseAccessGate } from "@brainbuddy/memory-engine/access";
 import { FileMemoryStore, type MemoryStore } from "@brainbuddy/memory-engine/memory";
 import { SqliteSourceStore } from "@brainbuddy/memory-engine/sqlite";
 import { buildProtectionPlan, PrivacyEngine, toProtectionPreview } from "@brainbuddy/privacy-engine";
@@ -23,7 +22,7 @@ import { ManualCaptureMemoryProjector } from "./manual-capture-memory-projector"
 
 export class LocalBackend {
   readonly memories: MemoryStore;
-  readonly access: DatabaseAccessGate;
+  readonly access: Pick<SqliteSourceStore, "status" | "configure" | "unlock" | "lock" | "assertUnlocked">;
   readonly records: ProtectedRecordReader;
   readonly #privacy = new PrivacyEngine({
     knownEntities: [{
@@ -48,19 +47,19 @@ export class LocalBackend {
     mkdirSync(options.applicationDataDirectory, { recursive: true });
     mkdirSync(options.databaseDirectory, { recursive: true });
     mkdirSync(options.memoryDirectory, { recursive: true });
-    const encryptionKey = loadEncryptionKey(options.applicationDataDirectory);
     this.#sources = new SqliteSourceStore({
-      databasePath: join(options.databaseDirectory, "brainbuddy.sqlite"),
-      encryptionKey
+      databasePath: join(options.databaseDirectory, "lookingfor.sqlite")
     });
     this.#modelConnection = new ModelConnectionStore({
-      metadataPath: join(options.applicationDataDirectory, "model-connection.json"),
-      encryptionKey,
+      settings: {
+        read: () => this.#sources.getSetting("model.connection"),
+        write: (value) => this.#sources.setSetting("model.connection", value)
+      },
       ...(options.initialModelConnection ? { initialConnection: options.initialModelConnection } : {})
     });
     this.memories = new FileMemoryStore({ rootDirectory: options.memoryDirectory });
     this.#manualCaptureMemories = new ManualCaptureMemoryProjector(this.memories);
-    this.access = new DatabaseAccessGate({ metadataPath: join(options.applicationDataDirectory, "database-access.json") });
+    this.access = this.#sources;
     this.records = {
       search: (query, limit) => {
         const result = this.#sources.searchOffline(query);
@@ -102,17 +101,14 @@ export class LocalBackend {
   }
 
   reveal(sourceId: string): DemoSourceReveal {
-    this.access.assertUnlocked();
     return this.#sources.revealSource(sourceId);
   }
 
   revealCredential(credentialId: string): DemoCredentialReveal {
-    this.access.assertUnlocked();
     return this.#sources.revealCredential(credentialId);
   }
 
   resetDatabase(): DatabaseResetResult {
-    this.access.assertUnlocked();
     return this.#sources.reset();
   }
 
@@ -172,19 +168,4 @@ function mergeManualEntities(text: string, detected: readonly DetectedEntity[], 
 
 function rangesOverlap(aStart: number, aEnd: number, bStart: number, bEnd: number): boolean {
   return aStart < bEnd && bStart < aEnd;
-}
-
-function loadEncryptionKey(dataDirectory: string): Buffer {
-  const keyPath = join(dataDirectory, "brainbuddy.key");
-  try {
-    const key = readFileSync(keyPath);
-    if (key.byteLength !== 32) throw new Error("Stored BrainBuddy key is invalid");
-    chmodSync(keyPath, 0o600);
-    return key;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    const key = randomBytes(32);
-    writeFileSync(keyPath, key, { flag: "wx", mode: 0o600 });
-    return key;
-  }
 }

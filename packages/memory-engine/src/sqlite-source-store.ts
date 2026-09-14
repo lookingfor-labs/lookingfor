@@ -1,7 +1,9 @@
-import { createCipheriv, createDecipheriv, createHmac, randomBytes, randomUUID } from "node:crypto";
-import { chmodSync } from "node:fs";
-import { DatabaseSync } from "node:sqlite";
+import { createHash, randomUUID } from "node:crypto";
+import { chmodSync, existsSync, statSync } from "node:fs";
+import Database from "better-sqlite3-multiple-ciphers";
+import type { CipherDatabase } from "better-sqlite3-multiple-ciphers";
 import type {
+  DatabaseAccessStatus,
   CredentialDraft,
   DemoCredentialReveal,
   DemoCredentialSummary,
@@ -18,43 +20,82 @@ import { findCredentialReferences, toProtectionPreview } from "@brainbuddy/priva
 
 interface SqliteSourceStoreOptions {
   readonly databasePath: string;
-  readonly encryptionKey: Uint8Array;
   readonly now?: () => Date;
   readonly sourceIdFactory?: () => string;
 }
 
-interface EncryptedValue {
-  readonly ciphertext: string;
-  readonly iv: string;
-  readonly tag: string;
-}
-
 export class SqliteSourceStore {
-  readonly #database: DatabaseSync;
-  readonly #key: Buffer;
+  readonly #databasePath: string;
+  #database: CipherDatabase | undefined;
   readonly #now: () => Date;
   readonly #sourceIdFactory: () => string;
 
   constructor(options: SqliteSourceStoreOptions) {
-    if (options.encryptionKey.byteLength !== 32) throw new Error("The database encryption key must contain 32 bytes");
-    this.#database = new DatabaseSync(options.databasePath);
-    this.#key = Buffer.from(options.encryptionKey);
+    this.#databasePath = options.databasePath;
     this.#now = options.now ?? (() => new Date());
     this.#sourceIdFactory = options.sourceIdFactory ?? (() => `SOURCE_${randomUUID()}`);
-    this.#database.exec("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;");
-    this.#migrate();
-    restrictDatabaseFiles(options.databasePath);
+  }
+
+  status(): DatabaseAccessStatus {
+    return { passwordConfigured: databaseExists(this.#databasePath), unlocked: Boolean(this.#database) };
+  }
+
+  configure(currentPassword: string | undefined, newPassword: string): DatabaseAccessStatus {
+    assertPasswordStrength(newPassword);
+    const configured = databaseExists(this.#databasePath);
+    if (configured && !currentPassword) throw new Error("DATABASE_PASSWORD_INVALID: Current database password is required");
+    if (!configured) {
+      this.lock();
+      const database = openDatabase(this.#databasePath, newPassword, false);
+      this.#migrate(database);
+      this.#database = database;
+    } else {
+      // Validate first so a mistyped current password does not lock an already
+      // open application. Rekeying itself needs an exclusive connection.
+      const validationDatabase = openDatabase(this.#databasePath, currentPassword!, true);
+      validationDatabase.close();
+      this.lock();
+      const database = openDatabase(this.#databasePath, currentPassword!, true);
+      try {
+        database.pragma(`rekey=${quoteSqlCipherPassphrase(newPassword)}`);
+        database.prepare("SELECT count(*) AS count FROM sqlite_schema").get();
+        this.#database = database;
+      } catch (error) {
+        database.close();
+        throw normalizeDatabasePasswordError(error);
+      }
+    }
+    restrictDatabaseFiles(this.#databasePath);
+    return this.status();
+  }
+
+  unlock(password: string): DatabaseAccessStatus {
+    if (!databaseExists(this.#databasePath)) throw new Error("DATABASE_PASSWORD_NOT_CONFIGURED: Create the encrypted database first");
+    this.lock();
+    this.#database = openDatabase(this.#databasePath, password, true);
+    this.#migrate(this.#database);
+    restrictDatabaseFiles(this.#databasePath);
+    return this.status();
+  }
+
+  lock(): DatabaseAccessStatus {
+    this.#database?.close();
+    this.#database = undefined;
+    return this.status();
+  }
+
+  assertUnlocked(): void {
+    if (!this.#database) throw new Error("DATABASE_LOCKED: Unlock the encrypted local database first");
   }
 
   save(plan: ProtectionPlan, originalContent: string, kind: SourceSubmissionKind = "capture"): DemoSaveReceipt {
+    const database = this.#requireDatabase();
     const initialPreview = toProtectionPreview(plan);
     if (!initialPreview.readyToSave) throw new Error("Protection checks must pass before saving");
 
     const sourceId = this.#sourceIdFactory();
     const savedAt = this.#now().toISOString();
-    const encryptedSource = encrypt(originalContent, this.#key);
-
-    this.#database.exec("BEGIN IMMEDIATE");
+    database.exec("BEGIN IMMEDIATE");
     try {
       const resolvedCredentials = plan.credentialDrafts.map((draft) => this.#resolveCredential(draft, savedAt));
       const protectedContent = appendSourceReference(
@@ -64,18 +105,18 @@ export class SqliteSourceStore {
       const credentialIds = [...new Set(findCredentialReferences(protectedContent).map(({ credentialId }) => credentialId))];
       const unknownCredentialId = credentialIds.find((credentialId) => !this.#credentialExists(credentialId));
       if (unknownCredentialId) throw new Error(`Credential reference does not exist: ${unknownCredentialId}`);
-      this.#database.prepare(`
+      database.prepare(`
         INSERT INTO sources (
-          source_id, submission_kind, protected_content, original_ciphertext, original_iv, original_tag, saved_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
-      `).run(sourceId, kind, protectedContent, encryptedSource.ciphertext, encryptedSource.iv, encryptedSource.tag, savedAt);
+          source_id, submission_kind, protected_content, original_content, saved_at
+        ) VALUES (?, ?, ?, ?, ?)
+      `).run(sourceId, kind, protectedContent, originalContent, savedAt);
 
       for (const credentialId of credentialIds) {
-        this.#database.prepare(`
+        database.prepare(`
           INSERT OR IGNORE INTO credential_sources (credential_id, source_id) VALUES (?, ?)
         `).run(credentialId, sourceId);
       }
-      this.#database.exec("COMMIT");
+      database.exec("COMMIT");
 
       const normalizedPlan: ProtectionPlan = {
         ...plan,
@@ -91,7 +132,7 @@ export class SqliteSourceStore {
         preview: toProtectionPreview(normalizedPlan)
       };
     } catch (error) {
-      this.#database.exec("ROLLBACK");
+      database.exec("ROLLBACK");
       throw error;
     }
   }
@@ -101,8 +142,9 @@ export class SqliteSourceStore {
   }
 
   searchOffline(query: string, excludeSourceId?: string): DemoOfflineSearchResult {
+    const database = this.#requireDatabase();
     const pattern = `%${escapeLike(query.trim().toLocaleLowerCase())}%`;
-    const sources = this.#database.prepare(`
+    const sources = database.prepare(`
       SELECT source_id, submission_kind, protected_content, saved_at
       FROM sources
       WHERE (? = '' OR lower(source_id) LIKE ? ESCAPE '\\' OR lower(submission_kind) LIKE ? ESCAPE '\\'
@@ -110,9 +152,9 @@ export class SqliteSourceStore {
         AND (? IS NULL OR source_id <> ?)
       ORDER BY saved_at DESC
     `).all(query.trim(), pattern, pattern, pattern, excludeSourceId ?? null, excludeSourceId ?? null)
-      .map((row) => this.#sourceSummary(row as Record<string, unknown>));
+      .map((row: unknown) => this.#sourceSummary(row as Record<string, unknown>));
 
-    const credentials = this.#database.prepare(`
+    const credentials = database.prepare(`
       SELECT credential_id, entity_type, masked_value, saved_at
       FROM credentials AS credential
       WHERE ? = '' OR lower(credential_id) LIKE ? ESCAPE '\\' OR lower(entity_type) LIKE ? ESCAPE '\\'
@@ -127,53 +169,46 @@ export class SqliteSourceStore {
         )
       ORDER BY saved_at DESC
     `).all(query.trim(), pattern, pattern, pattern, pattern, pattern, pattern)
-      .map((row) => this.#credentialSummary(row as Record<string, unknown>));
+      .map((row: unknown) => this.#credentialSummary(row as Record<string, unknown>));
 
     return { sources, credentials };
   }
 
   revealSource(sourceId: string): DemoSourceReveal {
-    const row = this.#database.prepare(`
-      SELECT source_id, submission_kind, original_ciphertext, original_iv, original_tag, saved_at
+    const row = this.#requireDatabase().prepare(`
+      SELECT source_id, submission_kind, original_content, saved_at
       FROM sources WHERE source_id = ?
     `).get(sourceId) as Record<string, unknown> | undefined;
     if (!row) throw new Error("Source record not found");
     return {
       sourceId: String(row.source_id),
       kind: asSourceKind(row.submission_kind),
-      originalContent: decrypt({
-        ciphertext: String(row.original_ciphertext),
-        iv: String(row.original_iv),
-        tag: String(row.original_tag)
-      }, this.#key),
+      originalContent: String(row.original_content),
       savedAt: String(row.saved_at)
     };
   }
 
   revealCredential(credentialId: string): DemoCredentialReveal {
-    const row = this.#database.prepare(`
-      SELECT credential_id, entity_type, secret_ciphertext, secret_iv, secret_tag, saved_at
+    const database = this.#requireDatabase();
+    const row = database.prepare(`
+      SELECT credential_id, entity_type, secret, saved_at
       FROM credentials WHERE credential_id = ?
     `).get(credentialId) as Record<string, unknown> | undefined;
     if (!row) throw new Error("Credential record not found");
-    const sourceRows = this.#database.prepare(`
+    const sourceRows = database.prepare(`
       SELECT source_id FROM credential_sources WHERE credential_id = ? ORDER BY source_id
     `).all(credentialId) as Array<{ source_id: unknown }>;
     return {
       credentialId: String(row.credential_id),
       entityType: row.entity_type as EntityType,
-      value: decrypt({
-        ciphertext: String(row.secret_ciphertext),
-        iv: String(row.secret_iv),
-        tag: String(row.secret_tag)
-      }, this.#key),
+      value: String(row.secret),
       sourceIds: sourceRows.map(({ source_id }) => String(source_id)),
       savedAt: String(row.saved_at)
     };
   }
 
   hasSource(sourceId: string): boolean {
-    return Boolean(this.#database.prepare("SELECT 1 FROM sources WHERE source_id = ?").get(sourceId));
+    return Boolean(this.#requireDatabase().prepare("SELECT 1 FROM sources WHERE source_id = ?").get(sourceId));
   }
 
   hasCredential(credentialId: string): boolean {
@@ -181,25 +216,39 @@ export class SqliteSourceStore {
   }
 
   reset(): DatabaseResetResult {
-    const deletedSourceCount = Number((this.#database.prepare("SELECT count(*) AS count FROM sources").get() as { count: number }).count);
-    const deletedCredentialCount = Number((this.#database.prepare("SELECT count(*) AS count FROM credentials").get() as { count: number }).count);
-    this.#database.exec("BEGIN IMMEDIATE");
+    const database = this.#requireDatabase();
+    const deletedSourceCount = Number((database.prepare("SELECT count(*) AS count FROM sources").get() as { count: number }).count);
+    const deletedCredentialCount = Number((database.prepare("SELECT count(*) AS count FROM credentials").get() as { count: number }).count);
+    database.exec("BEGIN IMMEDIATE");
     try {
-      this.#database.exec("DELETE FROM sources; DELETE FROM credentials; COMMIT");
+      database.exec("DELETE FROM sources; DELETE FROM credentials; COMMIT");
       return { deletedSourceCount, deletedCredentialCount };
     } catch (error) {
-      this.#database.exec("ROLLBACK");
+      database.exec("ROLLBACK");
       throw error;
     }
   }
 
   close(): void {
-    this.#database.close();
+    this.lock();
+  }
+
+  getSetting(key: string): string | undefined {
+    const row = this.#requireDatabase().prepare("SELECT setting_value FROM settings WHERE setting_key = ?").get(key) as { setting_value?: unknown } | undefined;
+    return row ? String(row.setting_value) : undefined;
+  }
+
+  setSetting(key: string, value: string): void {
+    this.#requireDatabase().prepare(`
+      INSERT INTO settings (setting_key, setting_value) VALUES (?, ?)
+      ON CONFLICT(setting_key) DO UPDATE SET setting_value = excluded.setting_value
+    `).run(key, value);
   }
 
   #resolveCredential(draft: CredentialDraft, savedAt: string): CredentialDraft {
-    const secretHash = createHmac("sha256", this.#key).update(draft.secret).digest("hex");
-    const existingByHash = this.#database.prepare(`
+    const database = this.#requireDatabase();
+    const secretHash = createHash("sha256").update(draft.secret).digest("hex");
+    const existingByHash = database.prepare(`
       SELECT credential_id FROM credentials WHERE secret_hash = ?
     `).get(secretHash) as { credential_id?: unknown } | undefined;
     if (existingByHash) {
@@ -207,26 +256,23 @@ export class SqliteSourceStore {
       return { ...draft, credentialId, ref: `[CREDENTIAL:${credentialId}]` };
     }
 
-    const existingById = this.#database.prepare(`
+    const existingById = database.prepare(`
       SELECT secret_hash FROM credentials WHERE credential_id = ?
     `).get(draft.credentialId) as { secret_hash?: unknown } | undefined;
     if (existingById && String(existingById.secret_hash) !== secretHash) {
       throw new Error("A credential id cannot identify different secrets");
     }
     if (!existingById) {
-      const encrypted = encrypt(draft.secret, this.#key);
-      this.#database.prepare(`
+      database.prepare(`
         INSERT INTO credentials (
-          credential_id, entity_type, masked_value, secret_hash, secret_ciphertext, secret_iv, secret_tag, saved_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          credential_id, entity_type, masked_value, secret_hash, secret, saved_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
       `).run(
         draft.credentialId,
         draft.entityType,
         draft.maskedValue,
         secretHash,
-        encrypted.ciphertext,
-        encrypted.iv,
-        encrypted.tag,
+        draft.secret,
         savedAt
       );
     }
@@ -234,12 +280,12 @@ export class SqliteSourceStore {
   }
 
   #credentialExists(credentialId: string): boolean {
-    return Boolean(this.#database.prepare("SELECT 1 FROM credentials WHERE credential_id = ?").get(credentialId));
+    return Boolean(this.#requireDatabase().prepare("SELECT 1 FROM credentials WHERE credential_id = ?").get(credentialId));
   }
 
   #sourceSummary(row: Record<string, unknown>): DemoSourceSummary {
     const sourceId = String(row.source_id);
-    const credentialRows = this.#database.prepare(`
+    const credentialRows = this.#requireDatabase().prepare(`
       SELECT credential_id FROM credential_sources WHERE source_id = ? ORDER BY credential_id
     `).all(sourceId) as Array<{ credential_id: unknown }>;
     return {
@@ -253,7 +299,7 @@ export class SqliteSourceStore {
 
   #credentialSummary(row: Record<string, unknown>): DemoCredentialSummary {
     const credentialId = String(row.credential_id);
-    const sourceRows = this.#database.prepare(`
+    const sourceRows = this.#requireDatabase().prepare(`
       SELECT source_id FROM credential_sources WHERE credential_id = ? ORDER BY source_id
     `).all(credentialId) as Array<{ source_id: unknown }>;
     return {
@@ -265,15 +311,13 @@ export class SqliteSourceStore {
     };
   }
 
-  #migrate(): void {
-    this.#database.exec(`
+  #migrate(database: CipherDatabase): void {
+    database.exec(`
       CREATE TABLE IF NOT EXISTS sources (
         source_id TEXT PRIMARY KEY,
         submission_kind TEXT NOT NULL CHECK (submission_kind IN ('capture', 'local_search', 'conversation')),
         protected_content TEXT NOT NULL,
-        original_ciphertext TEXT NOT NULL,
-        original_iv TEXT NOT NULL,
-        original_tag TEXT NOT NULL,
+        original_content TEXT NOT NULL,
         saved_at TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS credentials (
@@ -281,9 +325,7 @@ export class SqliteSourceStore {
         entity_type TEXT NOT NULL,
         masked_value TEXT NOT NULL,
         secret_hash TEXT NOT NULL UNIQUE,
-        secret_ciphertext TEXT NOT NULL,
-        secret_iv TEXT NOT NULL,
-        secret_tag TEXT NOT NULL,
+        secret TEXT NOT NULL,
         saved_at TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS credential_sources (
@@ -291,53 +333,21 @@ export class SqliteSourceStore {
         source_id TEXT NOT NULL REFERENCES sources(source_id) ON DELETE CASCADE,
         PRIMARY KEY (credential_id, source_id)
       );
+      CREATE TABLE IF NOT EXISTS settings (
+        setting_key TEXT PRIMARY KEY,
+        setting_value TEXT NOT NULL
+      );
     `);
-    this.#migrateLegacySourceKinds();
-    this.#database.exec(`
+    database.exec(`
       CREATE INDEX IF NOT EXISTS source_saved_at ON sources(saved_at DESC);
       CREATE INDEX IF NOT EXISTS credential_source_source ON credential_sources(source_id);
+      PRAGMA user_version = 1;
     `);
   }
 
-  #migrateLegacySourceKinds(): void {
-    const table = this.#database.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'sources'")
-      .get() as { sql?: unknown } | undefined;
-    if (!String(table?.sql ?? "").includes("'write'")) return;
-    this.#database.exec("PRAGMA foreign_keys = OFF; BEGIN IMMEDIATE;");
-    try {
-      this.#database.exec(`
-        ALTER TABLE credential_sources RENAME TO credential_sources_legacy;
-        ALTER TABLE sources RENAME TO sources_legacy;
-        CREATE TABLE sources (
-          source_id TEXT PRIMARY KEY,
-          submission_kind TEXT NOT NULL CHECK (submission_kind IN ('capture', 'local_search', 'conversation')),
-          protected_content TEXT NOT NULL,
-          original_ciphertext TEXT NOT NULL,
-          original_iv TEXT NOT NULL,
-          original_tag TEXT NOT NULL,
-          saved_at TEXT NOT NULL
-        );
-        INSERT INTO sources
-        SELECT source_id,
-          CASE submission_kind WHEN 'write' THEN 'capture' WHEN 'query' THEN 'local_search' ELSE submission_kind END,
-          protected_content, original_ciphertext, original_iv, original_tag, saved_at
-        FROM sources_legacy;
-        CREATE TABLE credential_sources (
-          credential_id TEXT NOT NULL REFERENCES credentials(credential_id) ON DELETE CASCADE,
-          source_id TEXT NOT NULL REFERENCES sources(source_id) ON DELETE CASCADE,
-          PRIMARY KEY (credential_id, source_id)
-        );
-        INSERT INTO credential_sources SELECT credential_id, source_id FROM credential_sources_legacy;
-        DROP TABLE credential_sources_legacy;
-        DROP TABLE sources_legacy;
-        COMMIT;
-      `);
-    } catch (error) {
-      this.#database.exec("ROLLBACK;");
-      throw error;
-    } finally {
-      this.#database.exec("PRAGMA foreign_keys = ON;");
-    }
+  #requireDatabase(): CipherDatabase {
+    if (!this.#database) throw new Error("DATABASE_LOCKED: Unlock the encrypted local database first");
+    return this.#database;
   }
 }
 
@@ -356,28 +366,45 @@ function replaceCredentialReferences(
   }, content);
 }
 
-function encrypt(plaintext: string, key: Buffer): EncryptedValue {
-  const iv = randomBytes(12);
-  const cipher = createCipheriv("aes-256-gcm", key, iv);
-  const ciphertext = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
-  return {
-    ciphertext: ciphertext.toString("base64"),
-    iv: iv.toString("base64"),
-    tag: cipher.getAuthTag().toString("base64")
-  };
-}
-
-function decrypt(value: EncryptedValue, key: Buffer): string {
-  const decipher = createDecipheriv("aes-256-gcm", key, Buffer.from(value.iv, "base64"));
-  decipher.setAuthTag(Buffer.from(value.tag, "base64"));
-  return Buffer.concat([
-    decipher.update(Buffer.from(value.ciphertext, "base64")),
-    decipher.final()
-  ]).toString("utf8");
-}
-
 function escapeLike(value: string): string {
   return value.replaceAll("\\", "\\\\").replaceAll("%", "\\%").replaceAll("_", "\\_");
+}
+
+function openDatabase(path: string, password: string, fileMustExist: boolean): CipherDatabase {
+  const database = new Database(path, { fileMustExist });
+  try {
+    database.pragma("cipher='sqlcipher'");
+    database.pragma("legacy=4");
+    database.pragma(`key=${quoteSqlCipherPassphrase(password)}`);
+    database.prepare("SELECT count(*) AS count FROM sqlite_schema").get();
+    database.exec("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;");
+    return database;
+  } catch (error) {
+    database.close();
+    throw normalizeDatabasePasswordError(error);
+  }
+}
+
+function quoteSqlCipherPassphrase(password: string): string {
+  return `'${password.replaceAll("'", "''")}'`;
+}
+
+function assertPasswordStrength(password: string): void {
+  if (password.length < 8 || password.length > 128) {
+    throw new Error("DATABASE_PASSWORD_WEAK: Database password must contain 8 to 128 characters");
+  }
+}
+
+function normalizeDatabasePasswordError(error: unknown): Error {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/not a database|file is encrypted|cipher|malformed/iu.test(message)) {
+    return new Error("DATABASE_PASSWORD_INVALID: Database password is incorrect");
+  }
+  return error instanceof Error ? error : new Error(message);
+}
+
+function databaseExists(path: string): boolean {
+  return existsSync(path) && statSync(path).size > 0;
 }
 
 function asSourceKind(value: unknown): SourceSubmissionKind {

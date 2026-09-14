@@ -2,6 +2,8 @@ import { mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import Database from "better-sqlite3-multiple-ciphers";
+import type { CipherDatabase } from "better-sqlite3-multiple-ciphers";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ProtectionPlan } from "@brainbuddy/domain";
 import { SqliteSourceStore } from "./sqlite-source-store";
@@ -42,15 +44,16 @@ describe("SqliteSourceStore", () => {
   it("persists encrypted sources from each submission channel with searchable credential links", () => {
     const directory = mkdtempSync(join(tmpdir(), "brainbuddy-source-store-"));
     directories.push(directory);
-    const databasePath = join(directory, "brainbuddy.sqlite");
+    const databasePath = join(directory, "lookingfor.sqlite");
     const sourceIds = ["SOURCE_00000000-0000-4000-8000-000000000001", "SOURCE_00000000-0000-4000-8000-000000000002"];
     const options = {
       databasePath,
-      encryptionKey: Buffer.alloc(32, 7),
       now: () => new Date("2026-08-07T00:00:00.000Z"),
       sourceIdFactory: () => sourceIds.shift()!
     };
     const store = new SqliteSourceStore(options);
+    expect(store.status()).toEqual({ passwordConfigured: false, unlocked: false });
+    store.configure(undefined, "portable-password");
 
     const captureReceipt = store.save(plan(), `原始写入 ${secret}`, "capture");
     const conversationReceipt = store.save(plan(secondCredentialId), `原始对话 ${secret}`, "conversation");
@@ -78,13 +81,23 @@ describe("SqliteSourceStore", () => {
     });
     store.close();
 
-    const database = new DatabaseSync(databasePath);
-    expect(JSON.stringify(database.prepare("SELECT * FROM sources").all())).not.toContain(secret);
-    expect(JSON.stringify(database.prepare("SELECT * FROM credentials").all())).not.toContain(secret);
-    database.close();
+    expect(() => {
+      const database = new DatabaseSync(databasePath);
+      try { database.prepare("SELECT * FROM sources").all(); } finally { database.close(); }
+    }).toThrow();
+    const external = openExternalDatabase(databasePath, "portable-password");
+    expect(external.prepare("SELECT original_content FROM sources WHERE source_id = ?").get(captureReceipt.sourceId))
+      .toEqual({ original_content: `原始写入 ${secret}` });
+    expect(external.prepare("SELECT secret FROM credentials WHERE credential_id = ?").get(firstCredentialId))
+      .toEqual({ secret });
+    expect(external.pragma("user_version", { simple: true })).toBe(1);
+    external.close();
     expect(statSync(databasePath).mode & 0o777).toBe(0o600);
 
     const reopened = new SqliteSourceStore({ ...options, sourceIdFactory: () => sourceIds.shift()! });
+    expect(reopened.status()).toEqual({ passwordConfigured: true, unlocked: false });
+    expect(() => reopened.unlock("wrong-password")).toThrow("DATABASE_PASSWORD_INVALID");
+    reopened.unlock("portable-password");
     expect(reopened.searchOffline("Figma").sources).toHaveLength(2);
     expect(reopened.searchOffline(firstCredentialId).credentials).toHaveLength(1);
     reopened.close();
@@ -95,10 +108,10 @@ describe("SqliteSourceStore", () => {
     directories.push(directory);
     const sourceIds = ["SOURCE_FIRST", "SOURCE_REFERENCE", "SOURCE_UNKNOWN"];
     const store = new SqliteSourceStore({
-      databasePath: join(directory, "brainbuddy.sqlite"),
-      encryptionKey: Buffer.alloc(32, 7),
+      databasePath: join(directory, "lookingfor.sqlite"),
       sourceIdFactory: () => sourceIds.shift()!
     });
+    store.configure(undefined, "reference-password");
     const first = store.save(plan(), "原始凭据");
     const referencePlan: ProtectionPlan = {
       protectedContent: `密码是 [CREDENTIAL:${firstCredentialId}]`,
@@ -119,44 +132,22 @@ describe("SqliteSourceStore", () => {
     store.close();
   });
 
-  it("migrates legacy write and query source kinds to submission channels", () => {
-    const directory = mkdtempSync(join(tmpdir(), "brainbuddy-source-migration-"));
+  it("rekeys the portable database and invalidates the previous password", () => {
+    const directory = mkdtempSync(join(tmpdir(), "brainbuddy-source-rekey-"));
     directories.push(directory);
-    const databasePath = join(directory, "brainbuddy.sqlite");
-    const database = new DatabaseSync(databasePath);
-    database.exec(`
-      CREATE TABLE sources (
-        source_id TEXT PRIMARY KEY,
-        submission_kind TEXT NOT NULL CHECK (submission_kind IN ('write', 'query')),
-        protected_content TEXT NOT NULL,
-        original_ciphertext TEXT NOT NULL,
-        original_iv TEXT NOT NULL,
-        original_tag TEXT NOT NULL,
-        saved_at TEXT NOT NULL
-      );
-      CREATE TABLE credentials (
-        credential_id TEXT PRIMARY KEY,
-        entity_type TEXT NOT NULL,
-        masked_value TEXT NOT NULL,
-        secret_hash TEXT NOT NULL UNIQUE,
-        secret_ciphertext TEXT NOT NULL,
-        secret_iv TEXT NOT NULL,
-        secret_tag TEXT NOT NULL,
-        saved_at TEXT NOT NULL
-      );
-      CREATE TABLE credential_sources (
-        credential_id TEXT NOT NULL REFERENCES credentials(credential_id) ON DELETE CASCADE,
-        source_id TEXT NOT NULL REFERENCES sources(source_id) ON DELETE CASCADE,
-        PRIMARY KEY (credential_id, source_id)
-      );
-      INSERT INTO sources VALUES
-        ('SOURCE_OLD_WRITE', 'write', '旧写入', '', '', '', '2026-08-07T00:00:00.000Z'),
-        ('SOURCE_OLD_QUERY', 'query', '旧查询', '', '', '', '2026-08-07T00:01:00.000Z');
-    `);
-    database.close();
+    const databasePath = join(directory, "lookingfor.sqlite");
+    const store = new SqliteSourceStore({ databasePath });
+    store.configure(undefined, "first-password");
+    store.save(plan(), "重新加密前的原文");
 
-    const store = new SqliteSourceStore({ databasePath, encryptionKey: Buffer.alloc(32, 7) });
-    expect(store.searchOffline("").sources.map(({ kind }) => kind)).toEqual(["local_search", "capture"]);
+    expect(() => store.configure("wrong-password", "second-password")).toThrow("DATABASE_PASSWORD_INVALID");
+    expect(store.status()).toEqual({ passwordConfigured: true, unlocked: true });
+    expect(store.searchOffline("").sources).toHaveLength(1);
+    expect(store.configure("first-password", "second-password")).toEqual({ passwordConfigured: true, unlocked: true });
+    store.lock();
+    expect(() => store.unlock("first-password")).toThrow("DATABASE_PASSWORD_INVALID");
+    expect(store.unlock("second-password")).toEqual({ passwordConfigured: true, unlocked: true });
+    expect(store.searchOffline("").sources).toHaveLength(1);
     store.close();
   });
 
@@ -164,10 +155,10 @@ describe("SqliteSourceStore", () => {
     const directory = mkdtempSync(join(tmpdir(), "brainbuddy-source-reset-"));
     directories.push(directory);
     const store = new SqliteSourceStore({
-      databasePath: join(directory, "brainbuddy.sqlite"),
-      encryptionKey: Buffer.alloc(32, 7),
+      databasePath: join(directory, "lookingfor.sqlite"),
       sourceIdFactory: () => "SOURCE_RESET"
     });
+    store.configure(undefined, "reset-password");
     const receipt = store.save(plan(), "应被清除的原文");
 
     expect(store.reset()).toEqual({ deletedSourceCount: 1, deletedCredentialCount: 1 });
@@ -178,3 +169,12 @@ describe("SqliteSourceStore", () => {
     store.close();
   });
 });
+
+function openExternalDatabase(path: string, password: string): CipherDatabase {
+  const database = new Database(path, { fileMustExist: true });
+  database.pragma("cipher='sqlcipher'");
+  database.pragma("legacy=4");
+  database.pragma(`key='${password.replaceAll("'", "''")}'`);
+  database.prepare("SELECT count(*) FROM sqlite_schema").get();
+  return database;
+}
