@@ -281,17 +281,21 @@ export function MvpApp(): JSX.Element {
   const [startupError, setStartupError] = useState<string>();
 
   useEffect(() => {
-    void getLocalStorageSettings().then(setRuntimeSettings).catch(() => undefined);
-    void getDatabaseAccessStatus().then(setDatabaseAccess).catch((cause) => setStartupError(messageFrom(cause)));
+    void Promise.all([getLocalStorageSettings(), getDatabaseAccessStatus()])
+      .then(([settings, access]) => {
+        setRuntimeSettings(settings);
+        setDatabaseAccess(access);
+      })
+      .catch((cause) => setStartupError(messageFrom(cause)));
   }, []);
 
-  if (!databaseAccess) {
+  if (!databaseAccess || !runtimeSettings) {
     return <div className="mvp-vault-shell">{startupError
       ? <div className="mvp-vault-card"><Warning size={28} weight="duotone" /><h1>无法读取本地数据库状态</h1><p className="mvp-alert error" role="alert">{startupError}</p></div>
       : <LoadingState label="正在检查本地数据库" />}</div>;
   }
   if (!databaseAccess.unlocked) {
-    return <DatabaseVaultGate access={databaseAccess} onAccessChange={setDatabaseAccess} />;
+    return <DatabaseVaultGate access={databaseAccess} storageSettings={runtimeSettings} onAccessChange={setDatabaseAccess} onStorageSettingsChange={setRuntimeSettings} />;
   }
 
   return <div className="mvp-app">
@@ -318,16 +322,20 @@ export function MvpApp(): JSX.Element {
   </div>;
 }
 
-function DatabaseVaultGate({ access, onAccessChange }: {
+function DatabaseVaultGate({ access, storageSettings, onAccessChange, onStorageSettingsChange }: {
   readonly access: DatabaseAccessStatus;
+  readonly storageSettings: LocalStorageSettings;
   readonly onAccessChange: (status: DatabaseAccessStatus) => void;
+  readonly onStorageSettingsChange: (settings: LocalStorageSettings) => void;
 }): JSX.Element {
   const [password, setPassword] = useState("");
   const [confirmation, setConfirmation] = useState("");
+  const [paths, setPaths] = useState({ memoryDirectory: storageSettings.memoryDirectory, databaseDirectory: storageSettings.databaseDirectory });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string>();
   const isCreating = !access.passwordConfigured;
-  const canSubmit = password.length >= (isCreating ? 8 : 1) && (!isCreating || password === confirmation);
+  const pathsComplete = Boolean(paths.memoryDirectory.trim() && paths.databaseDirectory.trim());
+  const canSubmit = password.length >= (isCreating ? 8 : 1) && (!isCreating || (password === confirmation && pathsComplete));
 
   async function submit(event: React.FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
@@ -335,9 +343,24 @@ function DatabaseVaultGate({ access, onAccessChange }: {
     setIsSubmitting(true);
     setError(undefined);
     try {
-      onAccessChange(isCreating
-        ? await configureDatabasePassword(undefined, password)
-        : await unlockDatabase(password));
+      if (isCreating) {
+        const configuredSettings = await configureLocalStorageSettings({
+          ...storageSettings,
+          memoryDirectory: paths.memoryDirectory,
+          databaseDirectory: paths.databaseDirectory
+        });
+        onStorageSettingsChange(configuredSettings);
+        const selectedAccess = await getDatabaseAccessStatus();
+        if (selectedAccess.passwordConfigured) {
+          onAccessChange(selectedAccess);
+          setConfirmation("");
+          setError("所选数据库目录中已有 lookingfor.sqlite，请输入该数据库原有密码解锁。");
+          return;
+        }
+        onAccessChange(await configureDatabasePassword(undefined, password));
+      } else {
+        onAccessChange(await unlockDatabase(password));
+      }
     } catch (cause) {
       setError(messageFrom(cause));
     } finally {
@@ -355,6 +378,14 @@ function DatabaseVaultGate({ access, onAccessChange }: {
         : "输入数据库密码以打开本机的 SQLCipher 数据库。密码仅用于本地开库，不会发送给 AI。"}</p>
       {error && <p className="mvp-alert error" role="alert">{error}</p>}
       <form onSubmit={(event) => void submit(event)}>
+        {isCreating && <fieldset className="mvp-vault-storage">
+          <legend><Folder size={17} /><span>本地存储位置</span></legend>
+          <label htmlFor="database-vault-directory">数据库目录</label>
+          <input id="database-vault-directory" value={paths.databaseDirectory} spellCheck={false} onChange={(event) => setPaths((current) => ({ ...current, databaseDirectory: event.target.value }))} placeholder="lookingfor.sqlite 的保存目录" />
+          <label htmlFor="memory-vault-directory">Memory 目录</label>
+          <input id="memory-vault-directory" value={paths.memoryDirectory} spellCheck={false} onChange={(event) => setPaths((current) => ({ ...current, memoryDirectory: event.target.value }))} placeholder="Markdown Memory 的保存目录" />
+          <small>必须是两个独立、可读写的绝对目录，不能使用磁盘根目录、用户主目录或符号链接。</small>
+        </fieldset>}
         <VaultPasswordField id="database-vault-password" label={isCreating ? "数据库密码" : "密码"} autoComplete={isCreating ? "new-password" : "current-password"} minLength={isCreating ? 8 : 1} autoFocus value={password} onChange={setPassword} placeholder={isCreating ? "至少 8 个字符" : "输入数据库密码"} />
         {isCreating && <VaultPasswordField id="database-vault-confirmation" label="确认密码" autoComplete="new-password" minLength={8} value={confirmation} onChange={setConfirmation} placeholder="再次输入数据库密码" />}
         {isCreating && confirmation && password !== confirmation && <small className="mvp-vault-validation">两次输入的密码不一致</small>}
@@ -1404,7 +1435,7 @@ function SettingsPage({ runtimeSettings, access, onRuntimeSettingsChange, onAcce
     <PageHeader title="设置" copy="管理本地存储访问、模型连接和隐私边界。" />
     {message && <p className={`mvp-alert ${message.tone}`} role={message.tone === "error" ? "alert" : "status"}>{message.text}</p>}
     <div className="mvp-settings-grid">
-      <section className="mvp-card mvp-setting-card mvp-storage-settings"><div className="mvp-setting-icon"><Folder size={22} weight="duotone" /></div><div><h2>本地存储位置</h2><p>分别配置受控 Markdown 根目录和 SQLite 数据库目录；必须填写绝对路径。</p><form className="mvp-storage-form" onSubmit={(event) => void saveStorageSettings(event)}><label>本地记忆目录<input value={storageForm.memoryDirectory} required onChange={(event) => setStorageForm({ ...storageForm, memoryDirectory: event.target.value })} placeholder="例如 /Users/you/lookingfor/memories" /></label><label>数据库文件目录<input value={storageForm.databaseDirectory} required onChange={(event) => setStorageForm({ ...storageForm, databaseDirectory: event.target.value })} placeholder="例如 /Users/you/lookingfor/database" /></label><div className="mvp-form-actions"><button className="mvp-primary" type="submit" disabled={isSavingStorage || !storageForm.memoryDirectory.trim() || !storageForm.databaseDirectory.trim()}>{isSavingStorage ? "切换中" : "保存存储位置"}</button></div></form><p className="mvp-field-note">保存时会创建不存在的目录并立即切换；不会自动搬移旧目录中的数据。</p></div></section>
+      <section className="mvp-card mvp-setting-card mvp-storage-settings"><div className="mvp-setting-icon"><Folder size={22} weight="duotone" /></div><div><h2>本地存储位置</h2><p>分别配置受控 Markdown 根目录和 SQLite 数据库目录；必须填写绝对路径。</p><form className="mvp-storage-form" onSubmit={(event) => void saveStorageSettings(event)}><label>本地记忆目录<input value={storageForm.memoryDirectory} required onChange={(event) => setStorageForm({ ...storageForm, memoryDirectory: event.target.value })} placeholder="例如 /Users/you/lookingfor/memories" /></label><label>数据库文件目录<input value={storageForm.databaseDirectory} required onChange={(event) => setStorageForm({ ...storageForm, databaseDirectory: event.target.value })} placeholder="例如 /Users/you/lookingfor/database" /></label><div className="mvp-form-actions"><button className="mvp-primary" type="submit" disabled={isSavingStorage || !storageForm.memoryDirectory.trim() || !storageForm.databaseDirectory.trim()}>{isSavingStorage ? "切换中" : "保存存储位置"}</button></div></form><p className="mvp-field-note">保存时会创建不存在的目录并立即切换；两个目录必须独立、可读写，且不会自动搬移旧目录中的数据。</p></div></section>
       <section className="mvp-card mvp-setting-card mvp-model-settings"><div className="mvp-setting-icon"><Key size={22} weight="duotone" /></div><div><div className="mvp-setting-heading"><div><h2>AI 连接</h2><p>连接信息由本地后端加密保存。API 地址可指向 DeepSeek 或兼容的中转服务。</p></div><span className={`mvp-status-pill ${modelConnection?.configured ? "unlocked" : "unset"}`}>{modelConnection?.configured ? "已配置" : "尚未配置"}</span></div><form className="mvp-model-form" onSubmit={(event) => void saveModelConnection(event)}><label className="mvp-model-url">API 地址<input type="url" value={modelForm.baseUrl} required maxLength={2000} onChange={(event) => setModelForm({ ...modelForm, baseUrl: event.target.value })} placeholder="https://api.deepseek.com" /></label><label>模型名称<input value={modelForm.modelId} required maxLength={100} onChange={(event) => setModelForm({ ...modelForm, modelId: event.target.value })} placeholder="deepseek-v4-flash" /></label><label className="mvp-model-key">API Key<input type="password" autoComplete="new-password" minLength={8} maxLength={512} required value={modelForm.apiKey} onChange={(event) => setModelForm({ ...modelForm, apiKey: event.target.value })} placeholder={modelConnection?.maskedApiKey ? `当前 ${modelConnection.maskedApiKey}，输入新 Key 可替换` : "输入 API Key"} /></label><div className="mvp-form-actions"><button className="mvp-secondary" type="button" disabled={isTestingModel || isSavingModel || !modelForm.baseUrl.trim() || !modelForm.modelId.trim() || (modelForm.apiKey.trim().length > 0 && modelForm.apiKey.trim().length < 8) || (!modelConnection?.configured && modelForm.apiKey.trim().length < 8)} onClick={() => void checkModelConnection()}><CheckCircle size={16} />{isTestingModel ? "测试中" : "测试连接"}</button><button className="mvp-primary" type="submit" disabled={isSavingModel || isTestingModel || modelForm.apiKey.trim().length < 8 || !modelForm.baseUrl.trim() || !modelForm.modelId.trim()}>{isSavingModel ? "保存中" : modelConnection?.configured ? "更新连接" : "保存连接"}</button></div></form><p className="mvp-field-note">测试连接会发送内容为“1”的请求并将输出限制为 1 token；Key 留空时使用已保存的连接。默认地址为 DeepSeek API，默认模型为 deepseek-v4-flash。</p></div></section>
       <section className="mvp-card mvp-setting-card mvp-password-settings"><div className="mvp-setting-icon"><LockKey size={22} weight="duotone" /></div><div><div className="mvp-setting-heading"><div><h2>SQLCipher 数据库密码</h2><p>这是数据库文件的实际加密密码；兼容程序获得密码后可直接打开数据库。</p></div><span className="mvp-status-pill unlocked">已加密 · 已解锁</span></div><form className="mvp-password-form" onSubmit={(event) => void savePassword(event)}><label>当前密码<input type="password" autoComplete="current-password" required value={passwords.current} onChange={(event) => setPasswords({ ...passwords, current: event.target.value })} /></label><label>新密码<input type="password" autoComplete="new-password" minLength={8} maxLength={128} required value={passwords.next} onChange={(event) => setPasswords({ ...passwords, next: event.target.value })} placeholder="至少 8 个字符" /></label><label>确认新密码<input type="password" autoComplete="new-password" minLength={8} maxLength={128} required value={passwords.confirm} onChange={(event) => setPasswords({ ...passwords, confirm: event.target.value })} /></label><div className="mvp-form-actions"><button className="mvp-secondary" type="button" onClick={() => void lockNow()}><LockKey size={16} />立即锁定</button><button className="mvp-primary" type="submit" disabled={isSavingPassword || passwords.next.length < 8 || passwords.confirm.length < 8}>{isSavingPassword ? "保存中" : "更新数据库密码"}</button></div></form><p className="mvp-field-note">改密会重新加密整个数据库。忘记密码后无法恢复 Source、Credential 或数据库内的 AI 连接信息。</p></div></section>
       <section className="mvp-card mvp-setting-card mvp-security-settings"><div className="mvp-setting-icon"><ShieldCheck size={22} weight="duotone" /></div><div><h2>隐私与安全</h2><p>这些规则由运行时强制执行，不依赖模型自行遵守。</p><div className="mvp-policy-row mvp-policy-control"><div><strong>Memory 写入方式</strong><span>默认允许 Agent 自动写入，每次修改仍会保存 Revision。</span></div><select aria-label="Memory 写入方式" value={runtimeSettings?.memoryWritePolicy ?? "auto_apply"} disabled={!runtimeSettings} onChange={(event) => void changeMemoryWritePolicy(event.target.value as MemoryWritePolicy)}><option value="require_approval">每次需要批准</option><option value="auto_apply">允许 Agent 自动写入</option></select></div><div className="mvp-policy-row"><div><strong>凭据明文不发送给 AI</strong><span>Agent 只接收 Credential ID 与 Source 关联，不接收明文或掩码。</span></div><CheckCircle size={22} weight="fill" /></div><div className="mvp-policy-row"><div><strong>受控 Memory 根目录</strong><span>路径逃逸和符号链接会被拒绝。</span></div><CheckCircle size={22} weight="fill" /></div></div></section>
@@ -1506,6 +1537,12 @@ function messageFrom(cause: unknown): string {
   if (message.includes("MODEL_CONFIG_INVALID")) return "本地模型连接配置无法解密，请重新配置。";
   if (message.includes("MODEL_CONFIG_BLOCKED")) return "模型配置正在被 AI Run 使用，请先等待完成或取消 Run。";
   if (message.includes("LOCAL_STORAGE_PATH_NOT_ABSOLUTE")) return "Memory 和数据库目录必须填写绝对路径。";
+  if (message.includes("LOCAL_STORAGE_PATH_INVALID")) return "存储目录包含当前系统不支持的字符。";
+  if (message.includes("LOCAL_STORAGE_PATH_TOO_BROAD")) return "不能直接使用磁盘根目录或用户主目录，请选择专用子目录。";
+  if (message.includes("LOCAL_STORAGE_PATHS_OVERLAP")) return "Memory 与数据库目录必须相互独立，不能相同或互相嵌套。";
+  if (message.includes("LOCAL_STORAGE_PATH_SYMLINK")) return "存储目录不能是符号链接，请选择真实目录。";
+  if (message.includes("LOCAL_STORAGE_PATH_NOT_DIRECTORY")) return "所选存储路径已被普通文件占用。";
+  if (message.includes("LOCAL_STORAGE_PATH_NOT_ACCESSIBLE")) return "所选目录不可读写，请检查权限或选择其他目录。";
   if (message.includes("LOCAL_STORAGE_CONFIG_INVALID")) return "本地存储配置文件无效，请检查后重试。";
   if (message.includes("LOCAL_STORAGE_CONFIG_BLOCKED")) return "本地存储正在被 AI Run 使用，请先等待完成或取消 Run。";
   return message || "操作失败，请稍后重试。";

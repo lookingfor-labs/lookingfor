@@ -4,6 +4,19 @@ lookingfor stores Sources, Credentials, their provenance links, and the AI conne
 
 Memory remains a separate, AI-readable Markdown directory. It is not part of the encrypted database.
 
+## Storage directory rules
+
+During first-run setup and later settings changes, lookingfor applies the same backend validation before saving either directory:
+
+- both paths must be non-empty absolute paths supported by the current operating system;
+- neither path may be the filesystem root or the user's home directory itself;
+- the Memory and database directories must be separate: they cannot be identical, nested, or overlap the sibling `memory-revisions` directory;
+- an existing target must be a real directory rather than a regular file or symbolic link;
+- missing directories are created with private permissions where the operating system supports them;
+- both created targets must be readable, writable, and searchable by the lookingfor process.
+
+If the selected database directory already contains `lookingfor.sqlite`, setup does not overwrite it. The UI switches to unlock mode and requires that database's existing password.
+
 ## Open the database
 
 Use a SQLCipher-compatible client and apply these settings before the first schema query:
