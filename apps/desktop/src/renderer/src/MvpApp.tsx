@@ -9,6 +9,7 @@ import {
   CheckCircle,
   Database,
   Eye,
+  EyeSlash,
   FileMd,
   FloppyDisk,
   Folder,
@@ -354,14 +355,37 @@ function DatabaseVaultGate({ access, onAccessChange }: {
         : "输入数据库密码以打开本机的 SQLCipher 数据库。密码仅用于本地开库，不会发送给 AI。"}</p>
       {error && <p className="mvp-alert error" role="alert">{error}</p>}
       <form onSubmit={(event) => void submit(event)}>
-        <label>{isCreating ? "数据库密码" : "密码"}<input type="password" autoComplete={isCreating ? "new-password" : "current-password"} minLength={isCreating ? 8 : 1} maxLength={128} autoFocus value={password} onChange={(event) => setPassword(event.target.value)} placeholder={isCreating ? "至少 8 个字符" : "输入数据库密码"} /></label>
-        {isCreating && <label>确认密码<input type="password" autoComplete="new-password" minLength={8} maxLength={128} value={confirmation} onChange={(event) => setConfirmation(event.target.value)} placeholder="再次输入数据库密码" /></label>}
+        <VaultPasswordField id="database-vault-password" label={isCreating ? "数据库密码" : "密码"} autoComplete={isCreating ? "new-password" : "current-password"} minLength={isCreating ? 8 : 1} autoFocus value={password} onChange={setPassword} placeholder={isCreating ? "至少 8 个字符" : "输入数据库密码"} />
+        {isCreating && <VaultPasswordField id="database-vault-confirmation" label="确认密码" autoComplete="new-password" minLength={8} value={confirmation} onChange={setConfirmation} placeholder="再次输入数据库密码" />}
         {isCreating && confirmation && password !== confirmation && <small className="mvp-vault-validation">两次输入的密码不一致</small>}
         <button className="mvp-primary" type="submit" disabled={!canSubmit || isSubmitting}>{isSubmitting ? "处理中" : isCreating ? "创建并解锁" : "解锁数据库"}</button>
       </form>
       <small className="mvp-vault-note">请妥善保存密码。丢失后无法恢复数据库中的 Source、Credential 或 AI 连接密钥。</small>
     </section>
   </main>;
+}
+
+function VaultPasswordField({ id, label, value, placeholder, autoComplete, minLength, autoFocus = false, onChange }: {
+  readonly id: string;
+  readonly label: string;
+  readonly value: string;
+  readonly placeholder: string;
+  readonly autoComplete: "new-password" | "current-password";
+  readonly minLength: number;
+  readonly autoFocus?: boolean;
+  readonly onChange: (value: string) => void;
+}): JSX.Element {
+  const [visible, setVisible] = useState(false);
+  const action = visible ? "隐藏" : "显示";
+  return <div className="mvp-vault-field">
+    <label htmlFor={id}>{label}</label>
+    <div className="mvp-vault-password-input">
+      <input id={id} type={visible ? "text" : "password"} autoComplete={autoComplete} minLength={minLength} maxLength={128} autoFocus={autoFocus} value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} />
+      <button className="mvp-vault-visibility" type="button" aria-label={`${action}${label}`} aria-pressed={visible} title={`${action}${label}`} onClick={() => setVisible((current) => !current)}>
+        {visible ? <EyeSlash size={19} /> : <Eye size={19} />}
+      </button>
+    </div>
+  </div>;
 }
 
 export function ManualSecretInput({ value, onChange }: {

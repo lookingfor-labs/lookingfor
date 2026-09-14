@@ -22,9 +22,14 @@ body.mvp-route { min-width: 0; background: #f6f7fb; }
 .mvp-vault-card > p:not(.mvp-alert) { margin: 0 auto 22px; color: var(--mvp-muted); font-size: 13px; line-height: 1.65; text-wrap: pretty; }
 .mvp-vault-card form { display: grid; gap: 13px; text-align: left; }
 .mvp-vault-card label { display: grid; gap: 6px; color: #4b5366; font-size: 12px; font-weight: 700; }
-.mvp-vault-card input { min-height: 44px; border: 1px solid #d9dce5; border-radius: 11px; background: #fff; padding: 0 13px; color: var(--mvp-text); font: inherit; outline: 0; }
+.mvp-vault-field { display: grid; gap: 6px; }
+.mvp-vault-password-input { position: relative; }
+.mvp-vault-card input { width: 100%; min-height: 44px; border: 1px solid #d9dce5; border-radius: 11px; background: #fff; padding: 0 50px 0 13px; color: var(--mvp-text); font: inherit; outline: 0; }
 .mvp-vault-card input:focus { border-color: #a99fef; box-shadow: 0 0 0 3px rgba(103, 86, 217, .1); }
 .mvp-vault-card button { width: 100%; margin-top: 3px; }
+.mvp-vault-card .mvp-vault-visibility { position: absolute; top: 2px; right: 2px; display: grid; width: 40px; height: 40px; margin: 0; place-items: center; border: 0; border-radius: 9px; background: transparent; padding: 0; color: #747d90; cursor: pointer; transition-duration: 120ms; transition-property: background-color, color, scale; }
+.mvp-vault-card .mvp-vault-visibility:hover { background: #f1effd; color: var(--mvp-accent-strong); }
+.mvp-vault-card .mvp-vault-visibility:active { scale: .96; }
 .mvp-vault-card button:focus-visible, .mvp-vault-card input:focus-visible { outline: 3px solid rgba(103, 86, 217, .22); outline-offset: 2px; }
 .mvp-vault-validation { margin-top: -5px; color: #a43c43; font-size: 11px; }
 .mvp-vault-note { display: block; margin-top: 17px; color: #81899a; font-size: 10px; line-height: 1.55; text-wrap: pretty; }
