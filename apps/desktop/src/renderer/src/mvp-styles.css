@@ -1,4 +1,33 @@
 body.mvp-route { min-width: 0; background: #f6f7fb; }
+.mvp-vault-shell {
+  --mvp-panel: #fdfdff;
+  --mvp-line: #e3e6ef;
+  --mvp-text: #202638;
+  --mvp-muted: #697286;
+  --mvp-accent: #6756d9;
+  --mvp-accent-strong: #5141c6;
+  display: grid;
+  min-height: 100dvh;
+  place-items: center;
+  background: radial-gradient(circle at 50% 12%, #f0eeff 0, #f7f7fb 34%, #f2f3f7 100%);
+  padding: 28px;
+  color: var(--mvp-text);
+  font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+.mvp-vault-card { width: min(440px, 100%); border: 1px solid var(--mvp-line); border-radius: 22px; background: rgba(253, 253, 255, .96); padding: 34px; box-shadow: 0 24px 70px rgba(45, 42, 76, .12); text-align: center; }
+.mvp-vault-mark { display: grid; width: 48px; height: 48px; margin: 0 auto 14px; place-items: center; border-radius: 14px; background: #efedff; color: var(--mvp-accent); }
+.mvp-vault-brand { color: var(--mvp-accent); font-size: 12px; font-weight: 800; letter-spacing: .08em; }
+.mvp-vault-card h1 { margin: 8px 0 10px; font-size: 25px; line-height: 1.25; text-wrap: balance; }
+.mvp-vault-card > p:not(.mvp-alert) { margin: 0 auto 22px; color: var(--mvp-muted); font-size: 13px; line-height: 1.65; text-wrap: pretty; }
+.mvp-vault-card form { display: grid; gap: 13px; text-align: left; }
+.mvp-vault-card label { display: grid; gap: 6px; color: #4b5366; font-size: 12px; font-weight: 700; }
+.mvp-vault-card input { min-height: 44px; border: 1px solid #d9dce5; border-radius: 11px; background: #fff; padding: 0 13px; color: var(--mvp-text); font: inherit; outline: 0; }
+.mvp-vault-card input:focus { border-color: #a99fef; box-shadow: 0 0 0 3px rgba(103, 86, 217, .1); }
+.mvp-vault-card button { width: 100%; margin-top: 3px; }
+.mvp-vault-card button:focus-visible, .mvp-vault-card input:focus-visible { outline: 3px solid rgba(103, 86, 217, .22); outline-offset: 2px; }
+.mvp-vault-validation { margin-top: -5px; color: #a43c43; font-size: 11px; }
+.mvp-vault-note { display: block; margin-top: 17px; color: #81899a; font-size: 10px; line-height: 1.55; text-wrap: pretty; }
 .mvp-app {
   --mvp-bg: #f6f7fb;
   --mvp-panel: #fdfdff;

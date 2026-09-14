@@ -138,7 +138,13 @@ jobs:
             id: 1,
             method: "Runtime.evaluate",
             params: {
-              expression: "window.brainBuddy.getDatabaseAccessStatus().then(status => ({ bridge: typeof window.brainBuddy, status }))",
+              expression: `(async () => {
+                const before = await window.brainBuddy.getDatabaseAccessStatus();
+                const configured = await window.brainBuddy.configureDatabasePassword({
+                  newPassword: "packaged-smoke-password"
+                });
+                return { bridge: typeof window.brainBuddy, before, configured };
+              })()`,
               awaitPromise: true,
               returnByValue: true
             }
@@ -151,10 +157,15 @@ jobs:
             socket.addEventListener("error", reject, { once: true });
           });
           socket.close();
-          if (response.result?.exceptionDetails || response.result?.result?.value?.bridge !== "object") {
+          const value = response.result?.result?.value;
+          if (response.result?.exceptionDetails
+            || value?.bridge !== "object"
+            || value?.before?.passwordConfigured !== false
+            || value?.configured?.passwordConfigured !== true
+            || value?.configured?.unlocked !== true) {
             throw new Error(`Packaged Electron bridge smoke test failed: ${JSON.stringify(response)}`);
           }
-          console.log("Packaged renderer, preload bridge and database IPC are ready");
+          console.log("Packaged renderer, preload bridge and encrypted database are ready");
           NODE
 
       - name: Verify macOS application signature and architecture

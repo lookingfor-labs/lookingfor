@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -13,7 +13,7 @@ describe("LocalBackend", () => {
     const dataDirectory = mkdtempSync(join(tmpdir(), "brainbuddy-local-backend-"));
     directories.push(dataDirectory);
     const original = "Figma key 是 sk-local-backend-secret-123456";
-    const first = createBackend(dataDirectory);
+    const first = createBackend(dataDirectory, undefined, "persistent-password");
     const analysis = first.analyze(original);
     const receipt = first.save(original, analysis.entities.map(({ start, end, suggestedPolicy: policy }) => ({ start, end, policy })));
     const apiCredential = receipt.preview.credentials.find(({ entityType }) => entityType === "api_key")!;
@@ -21,13 +21,12 @@ describe("LocalBackend", () => {
     expect(projectedMemory.path).toContain("memories/manual-captures/");
     expect(projectedMemory.content).toContain(apiCredential.ref);
     expect(projectedMemory.content).not.toContain("sk-local-backend-secret-123456");
-    first.access.configure(undefined, "persistent-password");
     first.close();
 
-    const reopened = createBackend(dataDirectory);
+    const reopened = constructBackend(dataDirectory);
     expect(reopened.access.status()).toEqual({ passwordConfigured: true, unlocked: false });
-    expect(reopened.search(receipt.sourceId).sources.map(({ sourceId }) => sourceId)).toContain(receipt.sourceId);
     expect(reopened.memories.list().map(({ path }) => path)).toEqual([projectedMemory.path]);
+    expect(() => reopened.search(receipt.sourceId)).toThrow("DATABASE_LOCKED");
     expect(() => reopened.reveal(receipt.sourceId)).toThrow("DATABASE_LOCKED");
     expect(() => reopened.revealCredential(apiCredential.credentialId)).toThrow("DATABASE_LOCKED");
     reopened.access.unlock("persistent-password");
@@ -82,11 +81,12 @@ describe("LocalBackend", () => {
     first.configureModelConnection(replacementKey, "https://proxy.example.com/v1", "custom-model");
     first.close();
 
-    const metadataPath = join(dataDirectory, "model-connection.json");
-    const stored = readFileSync(metadataPath, "utf8");
+    const databasePath = join(dataDirectory, "lookingfor.sqlite");
+    const stored = readFileSync(databasePath).toString("utf8");
     expect(stored).not.toContain(importedKey);
     expect(stored).not.toContain(replacementKey);
-    expect(statSync(metadataPath).mode & 0o777).toBe(0o600);
+    expect(existsSync(join(dataDirectory, "brainbuddy.key"))).toBe(false);
+    expect(existsSync(join(dataDirectory, "model-connection.json"))).toBe(false);
 
     const reopened = createBackend(dataDirectory, {
       apiKey: importedKey,
@@ -220,6 +220,17 @@ describe("LocalBackend", () => {
 });
 
 function createBackend(dataDirectory: string, initialModelConnection?: {
+  readonly apiKey: string;
+  readonly baseUrl: string;
+  readonly modelId: string;
+}, databasePassword = "test-password"): LocalBackend {
+  const backend = constructBackend(dataDirectory, initialModelConnection);
+  if (backend.access.status().passwordConfigured) backend.access.unlock(databasePassword);
+  else backend.access.configure(undefined, databasePassword);
+  return backend;
+}
+
+function constructBackend(dataDirectory: string, initialModelConnection?: {
   readonly apiKey: string;
   readonly baseUrl: string;
   readonly modelId: string;

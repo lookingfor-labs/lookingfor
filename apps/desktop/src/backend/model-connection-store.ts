@@ -1,5 +1,3 @@
-import { createCipheriv, createDecipheriv, randomBytes, randomUUID } from "node:crypto";
-import { chmodSync, existsSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import type { ModelConnectionStatus } from "@brainbuddy/domain";
 
 export interface ModelConnection {
@@ -18,49 +16,40 @@ export function modelConnectionFromEnvironment(environment: NodeJS.ProcessEnv): 
   };
 }
 
-interface StoredModelConnectionV1 {
+interface StoredModelConnection {
   readonly version: 1;
   readonly provider: "deepseek";
-  readonly modelId: string;
-  readonly iv: string;
-  readonly authTag: string;
-  readonly ciphertext: string;
-}
-
-interface StoredModelConnectionV2 extends Omit<StoredModelConnectionV1, "version"> {
-  readonly version: 2;
   readonly baseUrl: string;
+  readonly modelId: string;
+  readonly apiKey: string;
 }
-
-type StoredModelConnection = StoredModelConnectionV1 | StoredModelConnectionV2;
 
 export const DEFAULT_MODEL_BASE_URL = "https://api.deepseek.com";
 export const DEFAULT_MODEL_ID = "deepseek-v4-flash";
 const DEFAULT_BASE_URL = DEFAULT_MODEL_BASE_URL;
-const AAD = Buffer.from("brainbuddy:model-connection:v1", "utf8");
+
+export interface ModelConnectionSettings {
+  read(): string | undefined;
+  write(value: string): void;
+}
 
 export class ModelConnectionStore {
-  readonly #metadataPath: string;
-  readonly #encryptionKey: Buffer;
+  readonly #settings: ModelConnectionSettings;
+  readonly #initialConnection: ModelConnection | undefined;
 
   constructor(options: {
-    readonly metadataPath: string;
-    readonly encryptionKey: Buffer;
+    readonly settings: ModelConnectionSettings;
     readonly initialConnection?: ModelConnection;
   }) {
-    this.#metadataPath = options.metadataPath;
-    this.#encryptionKey = options.encryptionKey;
-    if (!existsSync(this.#metadataPath) && options.initialConnection?.apiKey.trim()) {
-      this.configure(options.initialConnection.apiKey, options.initialConnection.baseUrl, options.initialConnection.modelId);
-    }
-    if (existsSync(this.#metadataPath)) chmodSync(this.#metadataPath, 0o600);
+    this.#settings = options.settings;
+    this.#initialConnection = options.initialConnection;
   }
 
   status(): ModelConnectionStatus {
-    if (!existsSync(this.#metadataPath)) {
+    const connection = this.#readOrImport();
+    if (!connection) {
       return { provider: "deepseek", configured: false, baseUrl: DEFAULT_BASE_URL, modelId: DEFAULT_MODEL_ID };
     }
-    const connection = this.requireConnection();
     return {
       provider: "deepseek",
       configured: true,
@@ -77,39 +66,42 @@ export class ModelConnectionStore {
     if (normalizedApiKey.length < 8 || normalizedApiKey.length > 512) throw new Error("MODEL_API_KEY_INVALID");
     if (!normalizedModelId || normalizedModelId.length > 100) throw new Error("MODEL_ID_INVALID");
 
-    const iv = randomBytes(12);
-    const cipher = createCipheriv("aes-256-gcm", this.#encryptionKey, iv);
-    cipher.setAAD(AAD);
-    const ciphertext = Buffer.concat([cipher.update(normalizedApiKey, "utf8"), cipher.final()]);
-    const stored: StoredModelConnectionV2 = {
-      version: 2,
+    const stored: StoredModelConnection = {
+      version: 1,
       provider: "deepseek",
       baseUrl: normalizedBaseUrl,
       modelId: normalizedModelId,
-      iv: iv.toString("base64"),
-      authTag: cipher.getAuthTag().toString("base64"),
-      ciphertext: ciphertext.toString("base64")
+      apiKey: normalizedApiKey
     };
-    writePrivateJsonAtomically(this.#metadataPath, stored);
+    this.#settings.write(JSON.stringify(stored));
     return this.status();
   }
 
   requireConnection(): ModelConnection {
-    if (!existsSync(this.#metadataPath)) throw new Error("MODEL_NOT_CONFIGURED");
+    const connection = this.#readOrImport();
+    if (!connection) throw new Error("MODEL_NOT_CONFIGURED");
+    return connection;
+  }
+
+  #readOrImport(): ModelConnection | undefined {
+    const value = this.#settings.read();
+    if (!value && this.#initialConnection?.apiKey.trim()) {
+      this.configure(this.#initialConnection.apiKey, this.#initialConnection.baseUrl, this.#initialConnection.modelId);
+      return this.#read();
+    }
+    return value ? this.#read(value) : undefined;
+  }
+
+  #read(value = this.#settings.read()): ModelConnection {
+    if (!value) throw new Error("MODEL_NOT_CONFIGURED");
     try {
-      const stored = JSON.parse(readFileSync(this.#metadataPath, "utf8")) as StoredModelConnection;
-      if ((stored.version !== 1 && stored.version !== 2) || stored.provider !== "deepseek") throw new Error("invalid metadata");
-      const decipher = createDecipheriv("aes-256-gcm", this.#encryptionKey, Buffer.from(stored.iv, "base64"));
-      decipher.setAAD(AAD);
-      decipher.setAuthTag(Buffer.from(stored.authTag, "base64"));
-      const apiKey = Buffer.concat([
-        decipher.update(Buffer.from(stored.ciphertext, "base64")),
-        decipher.final()
-      ]).toString("utf8");
-      if (!apiKey || !stored.modelId) throw new Error("invalid connection");
+      const stored = JSON.parse(value) as Partial<StoredModelConnection>;
+      if (stored.version !== 1 || stored.provider !== "deepseek" || !stored.apiKey || !stored.modelId || !stored.baseUrl) {
+        throw new Error("invalid metadata");
+      }
       return {
-        apiKey,
-        baseUrl: stored.version === 2 ? normalizeBaseUrl(stored.baseUrl) : DEFAULT_BASE_URL,
+        apiKey: stored.apiKey,
+        baseUrl: normalizeBaseUrl(stored.baseUrl),
         modelId: stored.modelId
       };
     } catch {
@@ -133,16 +125,4 @@ function maskApiKey(apiKey: string): string {
   const prefix = apiKey.slice(0, Math.min(3, apiKey.length));
   const suffix = apiKey.length > 7 ? apiKey.slice(-4) : "";
   return `${prefix}••••${suffix}`;
-}
-
-function writePrivateJsonAtomically(path: string, value: unknown): void {
-  const temporaryPath = `${path}.${randomUUID()}.tmp`;
-  try {
-    writeFileSync(temporaryPath, JSON.stringify(value, null, 2), { flag: "wx", mode: 0o600 });
-    renameSync(temporaryPath, path);
-    chmodSync(path, 0o600);
-  } catch (error) {
-    try { unlinkSync(temporaryPath); } catch { /* Nothing to clean up. */ }
-    throw error;
-  }
 }

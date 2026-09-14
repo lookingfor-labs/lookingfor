@@ -272,13 +272,23 @@ app.whenReady().then(() => {
   ipcMain.handle(GET_DATABASE_ACCESS_STATUS_CHANNEL, () => localBackend!.access.status());
   ipcMain.handle(CONFIGURE_DATABASE_PASSWORD_CHANNEL, (_event, request: unknown) => {
     const { currentPassword, newPassword } = ConfigureDatabasePasswordRequestSchema.parse(request);
+    if (aiRuns.size || agentRuns.size) throw new Error("DATABASE_REKEY_BLOCKED: A Run is still active");
+    aiDrafts.clear();
+    aiConversationEngine = undefined;
+    agentRuntime = undefined;
     return localBackend!.access.configure(currentPassword, newPassword);
   });
   ipcMain.handle(UNLOCK_DATABASE_CHANNEL, (_event, request: unknown) => {
     const { password } = UnlockDatabaseRequestSchema.parse(request);
     return localBackend!.access.unlock(password);
   });
-  ipcMain.handle(LOCK_DATABASE_CHANNEL, () => localBackend!.access.lock());
+  ipcMain.handle(LOCK_DATABASE_CHANNEL, () => {
+    if (aiRuns.size || agentRuns.size) throw new Error("DATABASE_LOCK_BLOCKED: A Run is still active");
+    aiDrafts.clear();
+    aiConversationEngine = undefined;
+    agentRuntime = undefined;
+    return localBackend!.access.lock();
+  });
   ipcMain.handle(RESET_DATABASE_CHANNEL, (_event, request: unknown) => {
     ResetDatabaseRequestSchema.parse(request);
     if (aiRuns.size || agentRuns.size) throw new Error("DATABASE_RESET_BLOCKED: A Run is still active");

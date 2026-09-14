@@ -276,10 +276,22 @@ export function MvpApp(): JSX.Element {
   const [recordRefresh, setRecordRefresh] = useState(0);
   const [memoryRefresh, setMemoryRefresh] = useState(0);
   const [runtimeSettings, setRuntimeSettings] = useState<LocalStorageSettings>();
+  const [databaseAccess, setDatabaseAccess] = useState<DatabaseAccessStatus>();
+  const [startupError, setStartupError] = useState<string>();
 
   useEffect(() => {
     void getLocalStorageSettings().then(setRuntimeSettings).catch(() => undefined);
+    void getDatabaseAccessStatus().then(setDatabaseAccess).catch((cause) => setStartupError(messageFrom(cause)));
   }, []);
+
+  if (!databaseAccess) {
+    return <div className="mvp-vault-shell">{startupError
+      ? <div className="mvp-vault-card"><Warning size={28} weight="duotone" /><h1>无法读取本地数据库状态</h1><p className="mvp-alert error" role="alert">{startupError}</p></div>
+      : <LoadingState label="正在检查本地数据库" />}</div>;
+  }
+  if (!databaseAccess.unlocked) {
+    return <DatabaseVaultGate access={databaseAccess} onAccessChange={setDatabaseAccess} />;
+  }
 
   return <div className="mvp-app">
     <aside className="mvp-sidebar">
@@ -298,11 +310,58 @@ export function MvpApp(): JSX.Element {
     </aside>
     <main className="mvp-main">
       <div hidden={page !== "home"}><HomePage active={page === "home"} memoryWritePolicy={runtimeSettings?.memoryWritePolicy ?? "auto_apply"} onSaved={() => { setRecordRefresh((value) => value + 1); setMemoryRefresh((value) => value + 1); }} /></div>
-      <div hidden={page !== "database"}><DatabasePage refreshToken={recordRefresh} /></div>
+      <div hidden={page !== "database"}><DatabasePage refreshToken={recordRefresh} access={databaseAccess} onAccessChange={setDatabaseAccess} /></div>
       <div hidden={page !== "memories"}><MemoriesPage refreshToken={memoryRefresh} onRefresh={() => setMemoryRefresh((value) => value + 1)} /></div>
-      <div hidden={page !== "settings"}><SettingsPage runtimeSettings={runtimeSettings} onRuntimeSettingsChange={setRuntimeSettings} /></div>
+      <div hidden={page !== "settings"}><SettingsPage runtimeSettings={runtimeSettings} access={databaseAccess} onRuntimeSettingsChange={setRuntimeSettings} onAccessChange={setDatabaseAccess} /></div>
     </main>
   </div>;
+}
+
+function DatabaseVaultGate({ access, onAccessChange }: {
+  readonly access: DatabaseAccessStatus;
+  readonly onAccessChange: (status: DatabaseAccessStatus) => void;
+}): JSX.Element {
+  const [password, setPassword] = useState("");
+  const [confirmation, setConfirmation] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState<string>();
+  const isCreating = !access.passwordConfigured;
+  const canSubmit = password.length >= (isCreating ? 8 : 1) && (!isCreating || password === confirmation);
+
+  async function submit(event: React.FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    if (!canSubmit) return;
+    setIsSubmitting(true);
+    setError(undefined);
+    try {
+      onAccessChange(isCreating
+        ? await configureDatabasePassword(undefined, password)
+        : await unlockDatabase(password));
+    } catch (cause) {
+      setError(messageFrom(cause));
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  return <main className="mvp-vault-shell">
+    <section className="mvp-vault-card">
+      <div className="mvp-vault-mark"><LockKey size={27} weight="duotone" /></div>
+      <span className="mvp-vault-brand">lookingfor</span>
+      <h1>{isCreating ? "创建加密数据库" : "解锁本地数据库"}</h1>
+      <p>{isCreating
+        ? "设置一个数据库密码。数据将以 SQLCipher 兼容格式保存，其他程序获得密码后也可以直接访问。"
+        : "输入数据库密码以打开本机的 SQLCipher 数据库。密码仅用于本地开库，不会发送给 AI。"}</p>
+      {error && <p className="mvp-alert error" role="alert">{error}</p>}
+      <form onSubmit={(event) => void submit(event)}>
+        <label>{isCreating ? "数据库密码" : "密码"}<input type="password" autoComplete={isCreating ? "new-password" : "current-password"} minLength={isCreating ? 8 : 1} maxLength={128} autoFocus value={password} onChange={(event) => setPassword(event.target.value)} placeholder={isCreating ? "至少 8 个字符" : "输入数据库密码"} /></label>
+        {isCreating && <label>确认密码<input type="password" autoComplete="new-password" minLength={8} maxLength={128} value={confirmation} onChange={(event) => setConfirmation(event.target.value)} placeholder="再次输入数据库密码" /></label>}
+        {isCreating && confirmation && password !== confirmation && <small className="mvp-vault-validation">两次输入的密码不一致</small>}
+        <button className="mvp-primary" type="submit" disabled={!canSubmit || isSubmitting}>{isSubmitting ? "处理中" : isCreating ? "创建并解锁" : "解锁数据库"}</button>
+      </form>
+      <small className="mvp-vault-note">请妥善保存密码。丢失后无法恢复数据库中的 Source、Credential 或 AI 连接密钥。</small>
+    </section>
+  </main>;
 }
 
 export function ManualSecretInput({ value, onChange }: {
@@ -1062,7 +1121,11 @@ function SectionTitle({ icon, title, copy }: { readonly icon: JSX.Element; reado
   return <header className="mvp-section-title"><span>{icon}</span><div><h2>{title}</h2><p>{copy}</p></div></header>;
 }
 
-function DatabasePage({ refreshToken }: { readonly refreshToken: number }): JSX.Element {
+function DatabasePage({ refreshToken, access, onAccessChange }: {
+  readonly refreshToken: number;
+  readonly access: DatabaseAccessStatus;
+  readonly onAccessChange: (status: DatabaseAccessStatus) => void;
+}): JSX.Element {
   const [activeTab, setActiveTab] = useState<DatabaseRecordTab>("saved");
   const [query, setQuery] = useState("");
   const [sources, setSources] = useState<readonly DemoSourceSummary[]>([]);
@@ -1071,9 +1134,6 @@ function DatabasePage({ refreshToken }: { readonly refreshToken: number }): JSX.
   const [selectedCredentialId, setSelectedCredentialId] = useState<string>();
   const [revealedSource, setRevealedSource] = useState<DemoSourceReveal>();
   const [revealedCredential, setRevealedCredential] = useState<DemoCredentialReveal>();
-  const [access, setAccess] = useState<DatabaseAccessStatus>();
-  const [unlockPassword, setUnlockPassword] = useState("");
-  const [isUnlocking, setIsUnlocking] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string>();
 
@@ -1098,7 +1158,6 @@ function DatabasePage({ refreshToken }: { readonly refreshToken: number }): JSX.
 
   useEffect(() => {
     void load("");
-    void getDatabaseAccessStatus().then(setAccess).catch((cause) => setError(messageFrom(cause)));
   }, [refreshToken]);
   const savedSources = sources.filter(({ kind }) => databaseRecordTab(kind) === "saved");
   const conversationSources = sources.filter(({ kind }) => databaseRecordTab(kind) === "conversation");
@@ -1117,46 +1176,26 @@ function DatabasePage({ refreshToken }: { readonly refreshToken: number }): JSX.
 
   async function revealSource(sourceId = selectedSource?.sourceId): Promise<void> {
     if (!sourceId) return;
-    if (access && !access.unlocked) {
-      setError("请先输入数据库密码解锁原文。");
-      return;
-    }
     try { setRevealedSource(await revealDemoSource(sourceId)); }
     catch (cause) { setError(messageFrom(cause)); }
   }
 
   async function revealSelectedCredential(): Promise<void> {
     if (!selectedCredential) return;
-    if (access && !access.unlocked) {
-      setError("请先输入数据库密码解锁明文。");
-      return;
-    }
     try { setRevealedCredential(await revealCredential(selectedCredential.credentialId)); }
     catch (cause) { setError(messageFrom(cause)); }
-  }
-
-  async function unlock(): Promise<void> {
-    if (!unlockPassword) return;
-    setIsUnlocking(true);
-    setError(undefined);
-    try {
-      setAccess(await unlockDatabase(unlockPassword));
-      setUnlockPassword("");
-    } catch (cause) { setError(messageFrom(cause)); }
-    finally { setIsUnlocking(false); }
   }
 
   async function lock(): Promise<void> {
     setRevealedSource(undefined);
     setRevealedCredential(undefined);
-    setAccess(await lockDatabase());
+    onAccessChange(await lockDatabase());
   }
 
   return <div className="mvp-page">
     <PageHeader title="本地数据库" copy="查看主动保存、对话来源和保密信息之间的关联。" />
-    <div className="mvp-toolbar"><div className="mvp-search"><MagnifyingGlass size={19} /><input value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void load(); }} placeholder="搜索内容、Source ID 或凭据 ID" /></div><button className="mvp-secondary" type="button" disabled={isLoading} onClick={() => void load()}>{isLoading ? "查询中" : "查询"}</button>{access?.passwordConfigured && access.unlocked ? <button className="mvp-security-state is-button" type="button" onClick={() => void lock()}><LockOpen size={17} weight="fill" />已解锁 · 点击锁定</button> : <span className="mvp-security-state"><LockKey size={17} weight="fill" />{access?.passwordConfigured ? "原文已锁定" : "未设置访问密码"}</span>}</div>
+    <div className="mvp-toolbar"><div className="mvp-search"><MagnifyingGlass size={19} /><input value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void load(); }} placeholder="搜索内容、Source ID 或凭据 ID" /></div><button className="mvp-secondary" type="button" disabled={isLoading} onClick={() => void load()}>{isLoading ? "查询中" : "查询"}</button><button className="mvp-security-state is-button" type="button" onClick={() => void lock()}><LockOpen size={17} weight="fill" />数据库已解锁 · 点击锁定</button></div>
     {error && <p className="mvp-alert error" role="alert">{error}</p>}
-    {access?.passwordConfigured && !access.unlocked && <form className="mvp-unlock-bar" onSubmit={(event) => { event.preventDefault(); void unlock(); }}><LockKey size={19} weight="duotone" /><div><strong>数据库已锁定</strong><span>输入设置页配置的密码后，才能临时查看原文或重置数据库。</span></div><label className="mvp-visually-hidden" htmlFor="database-unlock-password">数据库密码</label><input id="database-unlock-password" type="password" autoComplete="current-password" value={unlockPassword} onChange={(event) => setUnlockPassword(event.target.value)} placeholder="数据库密码" /><button className="mvp-primary" type="submit" disabled={!unlockPassword || isUnlocking}>{isUnlocking ? "解锁中" : "解锁"}</button></form>}
     <section className="mvp-card mvp-database-card">
       <nav className="mvp-database-tabs" aria-label="数据库记录分类">
         <button type="button" className={activeTab === "saved" ? "active" : ""} aria-pressed={activeTab === "saved"} onClick={() => selectTab("saved")}><FloppyDisk size={18} weight={activeTab === "saved" ? "fill" : "regular"} /><span><strong>主动保存</strong><small>用户主动录入的信息</small></span><em>{savedSources.length}</em></button>
@@ -1217,18 +1256,18 @@ function MemoriesPage({ refreshToken, onRefresh }: { readonly refreshToken: numb
   </div>;
 }
 
-function SettingsPage({ runtimeSettings, onRuntimeSettingsChange }: {
+function SettingsPage({ runtimeSettings, access, onRuntimeSettingsChange, onAccessChange }: {
   readonly runtimeSettings: LocalStorageSettings | undefined;
+  readonly access: DatabaseAccessStatus;
   readonly onRuntimeSettingsChange: (settings: LocalStorageSettings) => void;
+  readonly onAccessChange: (status: DatabaseAccessStatus) => void;
 }): JSX.Element {
-  const [access, setAccess] = useState<DatabaseAccessStatus>();
   const [modelConnection, setModelConnection] = useState<ModelConnectionStatus>();
   const [modelForm, setModelForm] = useState({ apiKey: "", baseUrl: "https://api.deepseek.com", modelId: "deepseek-v4-flash" });
   const [storageForm, setStorageForm] = useState<LocalStorageSettings>({ memoryDirectory: "", databaseDirectory: "", memoryWritePolicy: "auto_apply" });
   const [passwords, setPasswords] = useState({ current: "", next: "", confirm: "" });
   const [resetOpen, setResetOpen] = useState(false);
   const [resetPhrase, setResetPhrase] = useState("");
-  const [resetPassword, setResetPassword] = useState("");
   const [isSavingPassword, setIsSavingPassword] = useState(false);
   const [isSavingModel, setIsSavingModel] = useState(false);
   const [isTestingModel, setIsTestingModel] = useState(false);
@@ -1237,7 +1276,6 @@ function SettingsPage({ runtimeSettings, onRuntimeSettingsChange }: {
   const [message, setMessage] = useState<{ readonly tone: "success" | "error"; readonly text: string }>();
 
   useEffect(() => {
-    void getDatabaseAccessStatus().then(setAccess).catch((cause) => setMessage({ tone: "error", text: messageFrom(cause) }));
     void getModelConnectionStatus().then((status) => {
       setModelConnection(status);
       setModelForm((current) => ({ ...current, baseUrl: status.baseUrl, modelId: status.modelId }));
@@ -1282,6 +1320,7 @@ function SettingsPage({ runtimeSettings, onRuntimeSettingsChange }: {
       const settings = await configureLocalStorageSettings(storageForm);
       setStorageForm(settings);
       onRuntimeSettingsChange(settings);
+      onAccessChange(await getDatabaseAccessStatus());
       setMessage({ tone: "success", text: "本地存储路径已更新，数据库和 Memory 已切换到新目录。" });
     } catch (cause) { setMessage({ tone: "error", text: messageFrom(cause) }); }
     finally { setIsSavingStorage(false); }
@@ -1310,18 +1349,17 @@ function SettingsPage({ runtimeSettings, onRuntimeSettingsChange }: {
     }
     setIsSavingPassword(true);
     try {
-      const status = await configureDatabasePassword(access?.passwordConfigured ? passwords.current : undefined, passwords.next);
-      setAccess(status);
+      const status = await configureDatabasePassword(passwords.current, passwords.next);
+      onAccessChange(status);
       setPasswords({ current: "", next: "", confirm: "" });
-      setMessage({ tone: "success", text: access?.passwordConfigured ? "数据库访问密码已更新。" : "数据库访问密码已设置；当前会话保持解锁。" });
+      setMessage({ tone: "success", text: "SQLCipher 数据库密码已更新。" });
     } catch (cause) { setMessage({ tone: "error", text: messageFrom(cause) }); }
     finally { setIsSavingPassword(false); }
   }
 
   async function lockNow(): Promise<void> {
     try {
-      setAccess(await lockDatabase());
-      setMessage({ tone: "success", text: "数据库原文访问已锁定。" });
+      onAccessChange(await lockDatabase());
     } catch (cause) { setMessage({ tone: "error", text: messageFrom(cause) }); }
   }
 
@@ -1330,13 +1368,9 @@ function SettingsPage({ runtimeSettings, onRuntimeSettingsChange }: {
     setIsResetting(true);
     setMessage(undefined);
     try {
-      let status = access;
-      if (access?.passwordConfigured && !access.unlocked) status = await unlockDatabase(resetPassword);
       const result = await resetDatabase();
-      setAccess(status);
       setResetOpen(false);
       setResetPhrase("");
-      setResetPassword("");
       setMessage({ tone: "success", text: `数据库已重置：清除 ${result.deletedSourceCount} 条 Source 和 ${result.deletedCredentialCount} 条 Credential。Memory 与调试记录未受影响。` });
     } catch (cause) { setMessage({ tone: "error", text: messageFrom(cause) }); }
     finally { setIsResetting(false); }
@@ -1348,9 +1382,9 @@ function SettingsPage({ runtimeSettings, onRuntimeSettingsChange }: {
     <div className="mvp-settings-grid">
       <section className="mvp-card mvp-setting-card mvp-storage-settings"><div className="mvp-setting-icon"><Folder size={22} weight="duotone" /></div><div><h2>本地存储位置</h2><p>分别配置受控 Markdown 根目录和 SQLite 数据库目录；必须填写绝对路径。</p><form className="mvp-storage-form" onSubmit={(event) => void saveStorageSettings(event)}><label>本地记忆目录<input value={storageForm.memoryDirectory} required onChange={(event) => setStorageForm({ ...storageForm, memoryDirectory: event.target.value })} placeholder="例如 /Users/you/lookingfor/memories" /></label><label>数据库文件目录<input value={storageForm.databaseDirectory} required onChange={(event) => setStorageForm({ ...storageForm, databaseDirectory: event.target.value })} placeholder="例如 /Users/you/lookingfor/database" /></label><div className="mvp-form-actions"><button className="mvp-primary" type="submit" disabled={isSavingStorage || !storageForm.memoryDirectory.trim() || !storageForm.databaseDirectory.trim()}>{isSavingStorage ? "切换中" : "保存存储位置"}</button></div></form><p className="mvp-field-note">保存时会创建不存在的目录并立即切换；不会自动搬移旧目录中的数据。</p></div></section>
       <section className="mvp-card mvp-setting-card mvp-model-settings"><div className="mvp-setting-icon"><Key size={22} weight="duotone" /></div><div><div className="mvp-setting-heading"><div><h2>AI 连接</h2><p>连接信息由本地后端加密保存。API 地址可指向 DeepSeek 或兼容的中转服务。</p></div><span className={`mvp-status-pill ${modelConnection?.configured ? "unlocked" : "unset"}`}>{modelConnection?.configured ? "已配置" : "尚未配置"}</span></div><form className="mvp-model-form" onSubmit={(event) => void saveModelConnection(event)}><label className="mvp-model-url">API 地址<input type="url" value={modelForm.baseUrl} required maxLength={2000} onChange={(event) => setModelForm({ ...modelForm, baseUrl: event.target.value })} placeholder="https://api.deepseek.com" /></label><label>模型名称<input value={modelForm.modelId} required maxLength={100} onChange={(event) => setModelForm({ ...modelForm, modelId: event.target.value })} placeholder="deepseek-v4-flash" /></label><label className="mvp-model-key">API Key<input type="password" autoComplete="new-password" minLength={8} maxLength={512} required value={modelForm.apiKey} onChange={(event) => setModelForm({ ...modelForm, apiKey: event.target.value })} placeholder={modelConnection?.maskedApiKey ? `当前 ${modelConnection.maskedApiKey}，输入新 Key 可替换` : "输入 API Key"} /></label><div className="mvp-form-actions"><button className="mvp-secondary" type="button" disabled={isTestingModel || isSavingModel || !modelForm.baseUrl.trim() || !modelForm.modelId.trim() || (modelForm.apiKey.trim().length > 0 && modelForm.apiKey.trim().length < 8) || (!modelConnection?.configured && modelForm.apiKey.trim().length < 8)} onClick={() => void checkModelConnection()}><CheckCircle size={16} />{isTestingModel ? "测试中" : "测试连接"}</button><button className="mvp-primary" type="submit" disabled={isSavingModel || isTestingModel || modelForm.apiKey.trim().length < 8 || !modelForm.baseUrl.trim() || !modelForm.modelId.trim()}>{isSavingModel ? "保存中" : modelConnection?.configured ? "更新连接" : "保存连接"}</button></div></form><p className="mvp-field-note">测试连接会发送内容为“1”的请求并将输出限制为 1 token；Key 留空时使用已保存的连接。默认地址为 DeepSeek API，默认模型为 deepseek-v4-flash。</p></div></section>
-      <section className="mvp-card mvp-setting-card mvp-password-settings"><div className="mvp-setting-icon"><LockKey size={22} weight="duotone" /></div><div><div className="mvp-setting-heading"><div><h2>数据库访问密码</h2><p>用于解锁原文查看和数据库重置；它不会替代独立的本机加密密钥。</p></div><span className={`mvp-status-pill ${access?.passwordConfigured ? (access.unlocked ? "unlocked" : "locked") : "unset"}`}>{access?.passwordConfigured ? (access.unlocked ? "已设置 · 已解锁" : "已设置 · 已锁定") : "尚未设置"}</span></div><form className="mvp-password-form" onSubmit={(event) => void savePassword(event)}>{access?.passwordConfigured && <label>当前密码<input type="password" autoComplete="current-password" required value={passwords.current} onChange={(event) => setPasswords({ ...passwords, current: event.target.value })} /></label>}<label>新密码<input type="password" autoComplete="new-password" minLength={8} maxLength={128} required value={passwords.next} onChange={(event) => setPasswords({ ...passwords, next: event.target.value })} placeholder="至少 8 个字符" /></label><label>确认新密码<input type="password" autoComplete="new-password" minLength={8} maxLength={128} required value={passwords.confirm} onChange={(event) => setPasswords({ ...passwords, confirm: event.target.value })} /></label><div className="mvp-form-actions">{access?.passwordConfigured && access.unlocked && <button className="mvp-secondary" type="button" onClick={() => void lockNow()}><LockKey size={16} />立即锁定</button>}<button className="mvp-primary" type="submit" disabled={isSavingPassword || passwords.next.length < 8 || passwords.confirm.length < 8}>{isSavingPassword ? "保存中" : access?.passwordConfigured ? "更新密码" : "设置密码"}</button></div></form><p className="mvp-field-note">忘记此密码后无法从界面查看原文或清库。密码校验信息会持久化在当前运行模式的本地数据目录。</p></div></section>
+      <section className="mvp-card mvp-setting-card mvp-password-settings"><div className="mvp-setting-icon"><LockKey size={22} weight="duotone" /></div><div><div className="mvp-setting-heading"><div><h2>SQLCipher 数据库密码</h2><p>这是数据库文件的实际加密密码；兼容程序获得密码后可直接打开数据库。</p></div><span className="mvp-status-pill unlocked">已加密 · 已解锁</span></div><form className="mvp-password-form" onSubmit={(event) => void savePassword(event)}><label>当前密码<input type="password" autoComplete="current-password" required value={passwords.current} onChange={(event) => setPasswords({ ...passwords, current: event.target.value })} /></label><label>新密码<input type="password" autoComplete="new-password" minLength={8} maxLength={128} required value={passwords.next} onChange={(event) => setPasswords({ ...passwords, next: event.target.value })} placeholder="至少 8 个字符" /></label><label>确认新密码<input type="password" autoComplete="new-password" minLength={8} maxLength={128} required value={passwords.confirm} onChange={(event) => setPasswords({ ...passwords, confirm: event.target.value })} /></label><div className="mvp-form-actions"><button className="mvp-secondary" type="button" onClick={() => void lockNow()}><LockKey size={16} />立即锁定</button><button className="mvp-primary" type="submit" disabled={isSavingPassword || passwords.next.length < 8 || passwords.confirm.length < 8}>{isSavingPassword ? "保存中" : "更新数据库密码"}</button></div></form><p className="mvp-field-note">改密会重新加密整个数据库。忘记密码后无法恢复 Source、Credential 或数据库内的 AI 连接信息。</p></div></section>
       <section className="mvp-card mvp-setting-card mvp-security-settings"><div className="mvp-setting-icon"><ShieldCheck size={22} weight="duotone" /></div><div><h2>隐私与安全</h2><p>这些规则由运行时强制执行，不依赖模型自行遵守。</p><div className="mvp-policy-row mvp-policy-control"><div><strong>Memory 写入方式</strong><span>默认允许 Agent 自动写入，每次修改仍会保存 Revision。</span></div><select aria-label="Memory 写入方式" value={runtimeSettings?.memoryWritePolicy ?? "auto_apply"} disabled={!runtimeSettings} onChange={(event) => void changeMemoryWritePolicy(event.target.value as MemoryWritePolicy)}><option value="require_approval">每次需要批准</option><option value="auto_apply">允许 Agent 自动写入</option></select></div><div className="mvp-policy-row"><div><strong>凭据明文不发送给 AI</strong><span>Agent 只接收 Credential ID 与 Source 关联，不接收明文或掩码。</span></div><CheckCircle size={22} weight="fill" /></div><div className="mvp-policy-row"><div><strong>受控 Memory 根目录</strong><span>路径逃逸和符号链接会被拒绝。</span></div><CheckCircle size={22} weight="fill" /></div></div></section>
-      <section className="mvp-card mvp-setting-card mvp-danger-settings"><div className="mvp-setting-icon"><Warning size={22} weight="duotone" /></div><div><h2>危险操作</h2><p>重置只清除本地数据库中的 Source、Credential 及其关联；不会删除 Memory、Agent 调试记录、模型连接配置、数据库访问密码或设备加密密钥。</p>{!resetOpen ? <div className="mvp-danger-row"><div><strong>重置数据库</strong><span>此操作不可撤销，执行前会要求再次确认。</span></div><button className="mvp-danger-button" type="button" onClick={() => { setResetOpen(true); setMessage(undefined); }}><Trash size={16} />重置数据库</button></div> : <div className="mvp-reset-confirm" role="group" aria-labelledby="reset-database-title"><div><strong id="reset-database-title">确认永久清除数据库？</strong><span>请输入“清除数据库”完成二次确认。</span></div><label>确认文本<input value={resetPhrase} autoFocus onChange={(event) => setResetPhrase(event.target.value)} placeholder="清除数据库" /></label>{access?.passwordConfigured && !access.unlocked && <label>数据库密码<input type="password" autoComplete="current-password" value={resetPassword} onChange={(event) => setResetPassword(event.target.value)} placeholder="先验证数据库密码" /></label>}<div className="mvp-form-actions"><button className="mvp-secondary" type="button" disabled={isResetting} onClick={() => { setResetOpen(false); setResetPhrase(""); setResetPassword(""); }}>取消</button><button className="mvp-danger-button" type="button" disabled={isResetting || resetPhrase !== "清除数据库" || Boolean(access?.passwordConfigured && !access.unlocked && !resetPassword)} onClick={() => void confirmReset()}>{isResetting ? "正在清除" : "确认清除数据库"}</button></div></div>}</div></section>
+      <section className="mvp-card mvp-setting-card mvp-danger-settings"><div className="mvp-setting-icon"><Warning size={22} weight="duotone" /></div><div><h2>危险操作</h2><p>重置只清除加密数据库中的 Source、Credential 及其关联；不会删除 Memory 或 Agent 调试记录。</p>{!resetOpen ? <div className="mvp-danger-row"><div><strong>重置数据库</strong><span>此操作不可撤销，执行前会要求再次确认。</span></div><button className="mvp-danger-button" type="button" onClick={() => { setResetOpen(true); setMessage(undefined); }}><Trash size={16} />重置数据库</button></div> : <div className="mvp-reset-confirm" role="group" aria-labelledby="reset-database-title"><div><strong id="reset-database-title">确认永久清除数据库？</strong><span>请输入“清除数据库”完成二次确认。</span></div><label>确认文本<input value={resetPhrase} autoFocus onChange={(event) => setResetPhrase(event.target.value)} placeholder="清除数据库" /></label><div className="mvp-form-actions"><button className="mvp-secondary" type="button" disabled={isResetting} onClick={() => { setResetOpen(false); setResetPhrase(""); }}>取消</button><button className="mvp-danger-button" type="button" disabled={isResetting || resetPhrase !== "清除数据库"} onClick={() => void confirmReset()}>{isResetting ? "正在清除" : "确认清除数据库"}</button></div></div>}</div></section>
     </div>
   </div>;
 }
