@@ -56,6 +56,7 @@ http://localhost:15174/demo
 - `desktop-dev` 浏览器模式用于开发验收；它监听局域网地址且未启用 TLS，不应输入真实密码或 Token。
 - Source、Credential 和 AI 连接保存在用户密码解锁的 SQLCipher 4 兼容数据库中；数据库 Schema 和外部访问方式见 [`docs/database-format.md`](docs/database-format.md)。
 - `desktop-dev` 浏览器 UI 使用与 Electron 相同的 SQLCipher Store 和文件 Memory Store，持久化目录为 `.it-runner/data/desktop-dev/`；两种模式只在 HTTP 与 IPC 传输适配器上不同。
+- 当前版本尚不支持多设备并发写入；不要直接用同步盘共享运行中的数据库或 Revision 账本。推荐的端到端加密同步架构与分阶段路线见 [`docs/multi-device-sync-design.md`](docs/multi-device-sync-design.md)。
 
 ## 工作区
 
