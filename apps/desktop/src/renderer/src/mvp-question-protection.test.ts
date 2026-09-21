@@ -107,10 +107,12 @@ describe("MVP question protection", () => {
       value: capture.text.slice(range.start, range.end),
       entityType
     }))).toEqual([
+      expect.objectContaining({ value: "家庭路由器", entityType: "custom" }),
       expect.objectContaining({ value: "123456", entityType: "custom" }),
       expect.objectContaining({ value: "中文口令", entityType: "custom" })
     ]);
     expect(capture.manualDecisions).toEqual([
+      expect.objectContaining({ policy: "keep_original" }),
       expect.objectContaining({ policy: "move_to_vault" }),
       expect.objectContaining({ policy: "keep_original" })
     ]);

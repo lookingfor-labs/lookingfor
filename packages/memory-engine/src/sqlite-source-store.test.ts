@@ -103,6 +103,20 @@ describe("SqliteSourceStore", () => {
     reopened.close();
   });
 
+  it("finds a Source and its Credential by text retained only in encrypted original content", () => {
+    const directory = mkdtempSync(join(tmpdir(), "brainbuddy-source-original-search-"));
+    directories.push(directory);
+    const store = new SqliteSourceStore({ databasePath: join(directory, "lookingfor.sqlite") });
+    store.configure(undefined, "original-search-password");
+    const receipt = store.save(plan(), `token.koolcenter.com\n保密信息：${secret}\n备注：6yong`, "capture");
+
+    const result = store.searchOffline("token");
+
+    expect(result.sources.map(({ sourceId }) => sourceId)).toContain(receipt.sourceId);
+    expect(result.credentials.map(({ credentialId }) => credentialId)).toContain(firstCredentialId);
+    store.close();
+  });
+
   it("links an existing Credential Reference and rejects unknown references", () => {
     const directory = mkdtempSync(join(tmpdir(), "brainbuddy-source-reference-"));
     directories.push(directory);

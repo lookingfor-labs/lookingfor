@@ -152,6 +152,32 @@ describe("LocalBackend", () => {
     backend.close();
   });
 
+  it("finds a manual capture by its non-secret keyword", () => {
+    const dataDirectory = mkdtempSync(join(tmpdir(), "brainbuddy-local-backend-"));
+    directories.push(dataDirectory);
+    const backend = createBackend(dataDirectory);
+    const keyword = "token.koolcenter.com";
+    const secret = "local-manual-secret";
+    const original = `${keyword}\n保密信息：${secret}\n备注：6yong`;
+    const start = original.indexOf(secret);
+
+    const manual = [
+      { start: 0, end: keyword.length, entityType: "custom" as const },
+      { start, end: start + secret.length, entityType: "custom" as const }
+    ];
+    const receipt = backend.save(original, [
+      { start: 0, end: keyword.length, policy: "keep_original" as const },
+      { start, end: start + secret.length, policy: "move_to_vault" as const }
+    ], "capture", manual);
+
+    const result = backend.search("token");
+
+    expect(receipt.preview.protectedContent).toContain(keyword);
+    expect(result.sources.map(({ sourceId }) => sourceId)).toContain(receipt.sourceId);
+    expect(result.credentials.map(({ credentialId }) => credentialId)).toEqual(receipt.credentialIds);
+    backend.close();
+  });
+
   it("projects explicitly AI-readable manual fields as plaintext while vaulting the others", () => {
     const dataDirectory = mkdtempSync(join(tmpdir(), "brainbuddy-local-backend-"));
     directories.push(dataDirectory);

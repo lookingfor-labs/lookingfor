@@ -148,10 +148,10 @@ export class SqliteSourceStore {
       SELECT source_id, submission_kind, protected_content, saved_at
       FROM sources
       WHERE (? = '' OR lower(source_id) LIKE ? ESCAPE '\\' OR lower(submission_kind) LIKE ? ESCAPE '\\'
-        OR lower(protected_content) LIKE ? ESCAPE '\\')
+        OR lower(protected_content) LIKE ? ESCAPE '\\' OR lower(original_content) LIKE ? ESCAPE '\\')
         AND (? IS NULL OR source_id <> ?)
       ORDER BY saved_at DESC
-    `).all(query.trim(), pattern, pattern, pattern, excludeSourceId ?? null, excludeSourceId ?? null)
+    `).all(query.trim(), pattern, pattern, pattern, pattern, excludeSourceId ?? null, excludeSourceId ?? null)
       .map((row: unknown) => this.#sourceSummary(row as Record<string, unknown>));
 
     const credentials = database.prepare(`
@@ -165,10 +165,11 @@ export class SqliteSourceStore {
           WHERE link.credential_id = credential.credential_id
             AND (lower(source.source_id) LIKE ? ESCAPE '\\'
               OR lower(source.submission_kind) LIKE ? ESCAPE '\\'
-              OR lower(source.protected_content) LIKE ? ESCAPE '\\')
+              OR lower(source.protected_content) LIKE ? ESCAPE '\\'
+              OR lower(source.original_content) LIKE ? ESCAPE '\\')
         )
       ORDER BY saved_at DESC
-    `).all(query.trim(), pattern, pattern, pattern, pattern, pattern, pattern)
+    `).all(query.trim(), pattern, pattern, pattern, pattern, pattern, pattern, pattern)
       .map((row: unknown) => this.#credentialSummary(row as Record<string, unknown>));
 
     return { sources, credentials };

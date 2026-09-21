@@ -116,8 +116,12 @@ export function buildManualCapture(form: SaveFormState): {
   readonly manualDecisions: ProtectionRequest["decisions"];
 } {
   let text = form.keyword.trim();
-  const manual: ManualSegment[] = [];
-  const manualDecisions: ProtectionRequest["decisions"][number][] = [];
+  const manual: ManualSegment[] = text
+    ? [{ start: 0, end: text.length, entityType: "custom" }]
+    : [];
+  const manualDecisions: ProtectionRequest["decisions"][number][] = text
+    ? [{ start: 0, end: text.length, policy: "keep_original" }]
+    : [];
   const secrets = form.secrets
     .map((secret) => ({ ...secret, value: secret.value.trim() }))
     .filter((secret) => Boolean(secret.value));
