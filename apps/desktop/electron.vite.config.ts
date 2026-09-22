@@ -14,7 +14,19 @@ export default defineConfig({
     },
     plugins: [
       externalizeDepsPlugin({
-        exclude: ["@brainbuddy/agent-runtime", "@brainbuddy/ai-conversation", "@brainbuddy/domain", "@brainbuddy/memory-engine", "@brainbuddy/privacy-engine", "@brainbuddy/shared-contracts"]
+        // Bundle every JavaScript dependency so electron-builder does not copy
+        // the same dependency tree into app.asar. The native database binding
+        // remains external via rollupOptions above.
+        exclude: [
+          "@brainbuddy/agent-runtime",
+          "@brainbuddy/ai-conversation",
+          "@brainbuddy/domain",
+          "@brainbuddy/memory-engine",
+          "@brainbuddy/privacy-engine",
+          "@brainbuddy/shared-contracts",
+          "dotenv",
+          "zod"
+        ]
       })
     ]
   },

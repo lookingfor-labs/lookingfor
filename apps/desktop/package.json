@@ -13,6 +13,7 @@
     "build": "electron-vite build",
     "pack": "npm run build && electron-builder --dir",
     "dist": "npm run build && electron-builder --publish never",
+    "verify:package": "node scripts/verify-packaged-dependencies.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "build": {
@@ -37,8 +38,7 @@
     "win": {
       "icon": "build/icon.ico",
       "target": [
-        "nsis",
-        "portable"
+        "nsis"
       ]
     },
     "mac": {
@@ -47,26 +47,27 @@
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
       "target": [
-        "dmg",
-        "zip"
+        "dmg"
       ],
       "category": "public.app-category.productivity"
     }
   },
   "dependencies": {
+    "better-sqlite3-multiple-ciphers": "^13.0.3"
+  },
+  "devDependencies": {
     "@brainbuddy/agent-runtime": "*",
     "@brainbuddy/ai-conversation": "*",
     "@brainbuddy/domain": "*",
     "@brainbuddy/memory-engine": "*",
     "@brainbuddy/privacy-engine": "*",
     "@brainbuddy/shared-contracts": "*",
+    "@electron/asar": "^3.4.1",
     "@phosphor-icons/react": "^2.1.10",
     "dotenv": "^17.2.3",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "zod": "^3.25.76"
-  },
-  "devDependencies": {
+    "zod": "^3.25.76",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^5.2.0",

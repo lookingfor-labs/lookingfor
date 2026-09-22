@@ -47,33 +47,35 @@ jobs:
             runner: ubuntu-24.04
             command: npm run dist --workspace @brainbuddy/desktop -- --linux AppImage --x64
             artifact: brainbuddy-linux-x64
+            app_asar: apps/desktop/release/linux-unpacked/resources/app.asar
             files: apps/desktop/release/*.AppImage
           - name: Windows x64
             runner: windows-2025
-            command: npm run dist --workspace @brainbuddy/desktop -- --win nsis portable --x64
+            command: npm run dist --workspace @brainbuddy/desktop -- --win nsis --x64
             artifact: brainbuddy-windows-x64
+            app_asar: apps/desktop/release/win-unpacked/resources/app.asar
             files: apps/desktop/release/*.exe
           - name: macOS Apple Silicon
             runner: macos-15
-            command: npm run dist --workspace @brainbuddy/desktop -- --mac dmg zip --arm64 -c.mac.identity=-
+            command: npm run dist --workspace @brainbuddy/desktop -- --mac dmg --arm64 -c.mac.identity=-
             artifact: brainbuddy-macos-arm64
             app: apps/desktop/release/mac-arm64/brainbuddy.app
+            app_asar: apps/desktop/release/mac-arm64/brainbuddy.app/Contents/Resources/app.asar
             executable: apps/desktop/release/mac-arm64/brainbuddy.app/Contents/MacOS/brainbuddy
             architecture: arm64
             files: |-
               apps/desktop/release/*.dmg
-              apps/desktop/release/*.zip
               docs/macos-unsigned-build.md
           - name: macOS Intel
             runner: macos-15-intel
-            command: npm run dist --workspace @brainbuddy/desktop -- --mac dmg zip --x64 -c.mac.identity=-
+            command: npm run dist --workspace @brainbuddy/desktop -- --mac dmg --x64 -c.mac.identity=-
             artifact: brainbuddy-macos-x64
             app: apps/desktop/release/mac/brainbuddy.app
+            app_asar: apps/desktop/release/mac/brainbuddy.app/Contents/Resources/app.asar
             executable: apps/desktop/release/mac/brainbuddy.app/Contents/MacOS/brainbuddy
             architecture: x86_64
             files: |-
               apps/desktop/release/*.dmg
-              apps/desktop/release/*.zip
               docs/macos-unsigned-build.md
     runs-on: ${{ matrix.runner }}
     env:
@@ -93,6 +95,9 @@ jobs:
 
       - name: Build package
         run: ${{ matrix.command }}
+
+      - name: Verify packaged dependencies
+        run: npm run verify:package --workspace @brainbuddy/desktop -- "${{ matrix.app_asar }}"
 
       - name: Smoke test packaged Linux renderer
         if: runner.os == 'Linux'
