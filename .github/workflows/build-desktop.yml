@@ -39,6 +39,7 @@ jobs:
   package:
     name: Package ${{ matrix.name }}
     needs: verify
+    if: github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
       matrix:
@@ -63,9 +64,7 @@ jobs:
             app_asar: apps/desktop/release/mac-arm64/brainbuddy.app/Contents/Resources/app.asar
             executable: apps/desktop/release/mac-arm64/brainbuddy.app/Contents/MacOS/brainbuddy
             architecture: arm64
-            files: |-
-              apps/desktop/release/*.dmg
-              docs/macos-unsigned-build.md
+            files: apps/desktop/release/*.dmg
           - name: macOS Intel
             runner: macos-15-intel
             command: npm run dist --workspace @brainbuddy/desktop -- --mac dmg --x64 -c.mac.identity=-
@@ -74,9 +73,7 @@ jobs:
             app_asar: apps/desktop/release/mac/brainbuddy.app/Contents/Resources/app.asar
             executable: apps/desktop/release/mac/brainbuddy.app/Contents/MacOS/brainbuddy
             architecture: x86_64
-            files: |-
-              apps/desktop/release/*.dmg
-              docs/macos-unsigned-build.md
+            files: apps/desktop/release/*.dmg
     runs-on: ${{ matrix.runner }}
     env:
       CSC_IDENTITY_AUTO_DISCOVERY: "false"
@@ -187,4 +184,4 @@ jobs:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.files }}
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 1
