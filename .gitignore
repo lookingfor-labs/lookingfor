@@ -4,6 +4,12 @@ out/
 apps/desktop/release/
 coverage/
 *.log
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
 .DS_Store
 Thumbs.db
 Desktop.ini
